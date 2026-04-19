@@ -18,8 +18,11 @@ classifiers = [
 dependencies = [
     "datasets<4.0.0",
     "dotenv>=0.9.9",
+    "evaluate>=0.4.6",
     "ipython",
+    "jiwer>=4.0.0",
     "jupyterlab",
+    "librosa>=0.11.0",
     "loguru",
     "matplotlib",
     "mkdocs",
@@ -30,7 +33,10 @@ dependencies = [
     "python-dotenv",
     "ruff",
     "scikit-learn",
+    "soundfile>=0.13.1",
+    "torch>=2.11.0",
     "tqdm",
+    "transformers>=5.5.4",
     "typer",
 ]
 requires-python = "~=3.10.0"

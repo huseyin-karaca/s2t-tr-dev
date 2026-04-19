@@ -84,4 +84,9 @@ WHISPER_BASE = BaseModelConfig(
     model_type="whisper" # <--- Kritik fark
 )
 
-ACTIVE_MODELS = [WAV2VEC2_BASE, HUBERT_LARGE, DATA2VEC_BASE, WHISPER_BASE]
+ALL_BASE_MODELS = {
+  "w2v2": WAV2VEC2_BASE, 
+  "hubert": HUBERT_LARGE, 
+  "d2v": DATA2VEC_BASE, 
+  "whisper": WHISPER_BASE
+}
