@@ -1,0 +1,6 @@
+- This is a research project code repo. The aim is to develop a transformer based meta learner, on top of three base ASR models. ASR model encodings are also inputs of meta model.
+- Modular, do not try yourself approach is adopted. Code neatness is very important. Write codes with google style docstrings. 
+- The training script will be PyTorch Lightning. 
+- Do not use print function, instead use logger. 
+- Give direct answers, do not make it super long. 
+- For base model, models, and datasets, etc we generate classes at configs. 
