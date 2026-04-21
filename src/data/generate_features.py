@@ -10,6 +10,7 @@ import typer
 # (Sözlük oldukları ve key'lerin alias, value'ların config class olduğu varsayımıyla)
 from src.data.config import ALL_DATASETS
 from src.base_models.config import ALL_BASE_MODELS
+from src.config import PROJ_ROOT
 
 app = typer.Typer(help="Çoklu Dataset ve Model için çıktı (embedding/wer) üretir.")
 
@@ -20,6 +21,19 @@ def process_combination(ds_cfg, model_cfg, device: str):
     # 1. Ham Veriyi Yükle
     ds = ds_cfg.load()
     ds = ds.cast_column("audio", Audio(sampling_rate=16000))
+
+    # ---> DÜZELTME BURAYA EKLENİYOR <---
+    # Çok kısa (0.1 saniyeden kısa) veya boş ses dosyalarını filtreden geçiriyoruz.
+    min_sample_length = 1600
+    original_len = len(ds)
+    ds = ds.filter(
+        lambda x: len(x["audio"]["array"]) > min_sample_length,
+        num_proc=os.cpu_count() or 4, # İşlemi paralelleştirerek hızlandırmak için
+        desc="Filtreleme (Çok kısa/bozuk sesler temizleniyor)"
+    )
+    if len(ds) < original_len:
+         typer.secho(f"🧹 Temizlik: {original_len - len(ds)} adet bozuk/kısa ses filtrelendi.", fg=typer.colors.YELLOW)
+    # -----------------------------------
     
     # 2. Model ve Metrik Hazırlığı
     loaded_model, processor = model_cfg.load(device=device)
@@ -78,6 +92,7 @@ def process_combination(ds_cfg, model_cfg, device: str):
     feature_ds.save_to_disk(output_dir)
     typer.secho(f"✅ Kombinasyon tamamlandı, buraya kaydedildi: {output_dir}", fg=typer.colors.GREEN)
 
+    
 
 @app.command()
 def generate_features(

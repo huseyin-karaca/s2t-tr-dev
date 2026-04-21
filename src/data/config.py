@@ -10,6 +10,7 @@ class DatasetConfig:
     subset: str
     split_name: str  # 'split' yerine 'split_name' diyelim, karışmasın
     revision: str = "refs/convert/parquet"
+    interim_path: str = "data/interim"
     
     # Path logic'i burada kapsüllüyoruz
     @property
