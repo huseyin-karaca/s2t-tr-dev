@@ -53,9 +53,9 @@ class BaseModelConfig:
                 audio_lengths = [len(a) for a in audio_arrays]
                 valid_lengths = [min(hidden.shape[1], l // 320) for l in audio_lengths]
 
-                # Slice to get variable-length frame arrays
+                # Slice to get variable-length frame arrays (float 16 yaptım)
                 embeddings_list = [
-                    hidden[i, :valid_lengths[i], :].cpu().numpy().tolist()
+                    hidden[i, :valid_lengths[i], :].half().cpu().numpy().tolist()
                     for i in range(len(audio_arrays))
                 ]
 
@@ -85,7 +85,7 @@ class BaseModelConfig:
 
                 # Slice padding for each batch item individually
                 embeddings_list = [
-                    hidden[i, :output_lengths[i], :].cpu().numpy().tolist()
+                    hidden[i, :output_lengths[i], :].half().cpu().numpy().tolist()
                     for i in range(len(audio_arrays))
                 ]
 
