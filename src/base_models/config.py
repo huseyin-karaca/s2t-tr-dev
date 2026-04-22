@@ -23,28 +23,41 @@ class BaseModelConfig:
         return model, processor
 
     def predict(self, model, processor, audio_array, sr, device):
-        """Tek örnek — batch metoduna yönlendirir."""
+        """Single example — routes to the batch method."""
         return self.predict_batch(model, processor, [audio_array], [sr], device)[0]
 
     def predict_batch(self, model, processor, audio_arrays: List, srs: List, device: str):
         """
-        Batch inference. Padding yapılır ama masked mean ile embedding
-        kalitesi tek-örnek çıktısıyla birebir aynı tutulur.
+        Batch inference. Padding is applied for batch processing, but valid 
+        frame-level embeddings are extracted directly without padding contamination.
         """
         with torch.no_grad():
             if self.model_type == "whisper":
                 inputs = processor(
                     audio_arrays,
-                    sampling_rate=srs[0],       # Whisper sabit 16 kHz bekler
+                    sampling_rate=srs[0],       # Whisper expects exactly 16 kHz
                     return_tensors="pt",
-                    padding=True,
+                    max_length=480000,
+                    padding="max_length",
                 ).to(device)
 
-                input_features = inputs.input_features  # (B, 80, T)
+                input_features = inputs.input_features  # strictly  (B, 80, 3000)
 
-                # Embedding: encoder temporal ortalaması
+                # Get frame-level sequence from the encoder
                 encoder_out = model.get_encoder()(input_features)
-                embeddings = encoder_out.last_hidden_state.mean(dim=1)  # (B, D)
+                hidden = encoder_out.last_hidden_state  # (B, T_frames, D) -> normally (B, 1500, D)
+
+                # Whisper processes at 100 frames/sec for mel spec, and the encoder 
+                # has a stride of 2 (50 frames/sec). So 1 frame = 20ms = 320 samples at 16kHz.
+                # We calculate the true valid frame length to remove Whisper's 30-second padding.
+                audio_lengths = [len(a) for a in audio_arrays]
+                valid_lengths = [min(hidden.shape[1], l // 320) for l in audio_lengths]
+
+                # Slice to get variable-length frame arrays
+                embeddings_list = [
+                    hidden[i, :valid_lengths[i], :].cpu().numpy().tolist()
+                    for i in range(len(audio_arrays))
+                ]
 
                 # Transcription
                 predicted_ids = model.generate(input_features)
@@ -64,32 +77,32 @@ class BaseModelConfig:
 
                 outputs = model(**inputs, output_hidden_states=True)
 
-                # attention_mask raw sample uzunluğunda → frame uzunluğuna indir
-                input_lengths = inputs.attention_mask.sum(dim=-1)           # (B,) — her örneğin gerçek sample sayısı
-                output_lengths = model._get_feat_extract_output_lengths(input_lengths)  # (B,) — frame sayısı
+                # Calculate valid lengths to slice off padding
+                input_lengths = inputs.attention_mask.sum(dim=-1)                       # (B,) — true sample count
+                output_lengths = model._get_feat_extract_output_lengths(input_lengths)  # (B,) — true frame count
 
-                hidden = outputs.hidden_states[-1]                          # (B, T_frames, D)
-                B, T, D = hidden.shape
+                hidden = outputs.hidden_states[-1]                                      # (B, max_T_frames, D)
 
-                # Frame maskesi oluştur: her örnek için ilk output_lengths[i] frame geçerli
-                frame_mask = torch.arange(T, device=hidden.device).unsqueeze(0) < output_lengths.unsqueeze(1)
-                frame_mask = frame_mask.unsqueeze(-1).float()               # (B, T, 1)
+                # Slice padding for each batch item individually
+                embeddings_list = [
+                    hidden[i, :output_lengths[i], :].cpu().numpy().tolist()
+                    for i in range(len(audio_arrays))
+                ]
 
-                embeddings = (hidden * frame_mask).sum(dim=1) / frame_mask.sum(dim=1)  # (B, D)
-
+                # Transcription
                 predicted_ids = torch.argmax(outputs.logits, dim=-1)
                 transcriptions = processor.batch_decode(predicted_ids)
 
         return [
             {
-                "embedding": embeddings[i].cpu().numpy().tolist(),
+                "embedding": embeddings_list[i],
                 "transcription": transcriptions[i],
             }
             for i in range(len(audio_arrays))
         ]
 
 
-# --- MODEL KATALOĞU ---
+# --- MODEL CATALOG ---
 WAV2VEC2_BASE = BaseModelConfig(
     alias="w2v2",
     model_id="facebook/wav2vec2-base-960h",
