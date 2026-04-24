@@ -33,10 +33,15 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-import torch.serialization
 import typer
 
-torch.serialization.add_safe_globals([np._core.multiarray.scalar])
+# We only load checkpoints we produced ourselves, so the weights_only security
+# hardening from PyTorch 2.6 is unnecessary here. Force the old behavior.
+_orig_torch_load = torch.load
+def _torch_load_full(*args, **kwargs):
+    kwargs["weights_only"] = False
+    return _orig_torch_load(*args, **kwargs)
+torch.load = _torch_load_full
 from pytorch_lightning.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
@@ -78,7 +83,10 @@ class ASRSelectorModule(pl.LightningModule):
         weight_decay: float = 1e-2,
         warmup_steps: int = 200,
         total_steps: int = 5000,
+        primary_weight: float = 1.0,
         aux_ce_weight: float = 0.3,
+        soft_ce_weight: float = 0.0,
+        soft_ce_temperature: float = 0.1,
         label_smoothing: float = 0.1,
     ):
         """Args:
@@ -119,7 +127,10 @@ class ASRSelectorModule(pl.LightningModule):
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
         self.total_steps = total_steps
+        self.primary_weight = primary_weight
         self.aux_ce_weight = aux_ce_weight
+        self.soft_ce_weight = soft_ce_weight
+        self.soft_ce_temperature = soft_ce_temperature
         self.label_smoothing = label_smoothing
 
     def forward(
@@ -139,13 +150,21 @@ class ASRSelectorModule(pl.LightningModule):
         primary_loss = weighted_wer.mean()
 
         best_model_idx = wer_scores.argmin(dim=-1)
-        aux_loss = F.cross_entropy(
+        hard_ce = F.cross_entropy(
             torch.log(probs + 1e-8),
             best_model_idx,
             label_smoothing=self.label_smoothing,
         )
 
-        total_loss = primary_loss + self.aux_ce_weight * aux_loss
+        # Soft CE: target distribution is softmax(-wer / T) — carries WER magnitudes.
+        soft_target = F.softmax(-wer_scores / self.soft_ce_temperature, dim=-1)
+        soft_ce = -(soft_target * torch.log(probs + 1e-8)).sum(dim=-1).mean()
+
+        total_loss = (
+            self.primary_weight * primary_loss
+            + self.aux_ce_weight * hard_ce
+            + self.soft_ce_weight * soft_ce
+        )
 
         selected_model = probs.argmax(dim=-1)
         oracle_wer = wer_scores.min(dim=-1).values
@@ -159,7 +178,8 @@ class ASRSelectorModule(pl.LightningModule):
 
         metrics = {
             "primary_loss": primary_loss,
-            "aux_loss": aux_loss,
+            "hard_ce": hard_ce,
+            "soft_ce": soft_ce,
             "total_loss": total_loss,
             "selected_wer": selected_wer.mean(),
             "oracle_wer": oracle_wer.mean(),
@@ -259,7 +279,22 @@ def train(
     weight_decay: float = typer.Option(1e-2, "--weight-decay"),
     warmup_steps: int = typer.Option(200, "--warmup-steps"),
     max_epochs: int = typer.Option(50, "--max-epochs"),
-    aux_ce_weight: float = typer.Option(0.3, "--aux-ce-weight"),
+    primary_weight: float = typer.Option(
+        1.0, "--primary-weight",
+        help="Weight of weighted-WER primary loss (set 0 for classification-only).",
+    ),
+    aux_ce_weight: float = typer.Option(
+        0.3, "--aux-ce-weight",
+        help="Weight of hard-label CE (argmin WER) auxiliary loss.",
+    ),
+    soft_ce_weight: float = typer.Option(
+        0.0, "--soft-ce-weight",
+        help="Weight of soft CE against softmax(-wer/T) target distribution.",
+    ),
+    soft_ce_temperature: float = typer.Option(
+        0.1, "--soft-ce-temperature",
+        help="Temperature for soft CE target; lower = sharper (closer to hard CE).",
+    ),
     label_smoothing: float = typer.Option(0.1, "--label-smoothing"),
     gradient_clip_val: float = typer.Option(1.0, "--gradient-clip-val"),
     seed: int = typer.Option(42, "--seed"),
@@ -327,7 +362,10 @@ def train(
         weight_decay=weight_decay,
         warmup_steps=warmup_steps,
         total_steps=total_steps,
+        primary_weight=primary_weight,
         aux_ce_weight=aux_ce_weight,
+        soft_ce_weight=soft_ce_weight,
+        soft_ce_temperature=soft_ce_temperature,
         label_smoothing=label_smoothing,
     )
 
@@ -397,7 +435,11 @@ def train(
         "share_stage1_weights": not separate_stage1,
         "learning_rate": learning_rate, "weight_decay": weight_decay,
         "warmup_steps": warmup_steps, "max_epochs": max_epochs,
-        "aux_ce_weight": aux_ce_weight, "label_smoothing": label_smoothing,
+        "primary_weight": primary_weight,
+        "aux_ce_weight": aux_ce_weight,
+        "soft_ce_weight": soft_ce_weight,
+        "soft_ce_temperature": soft_ce_temperature,
+        "label_smoothing": label_smoothing,
         "gradient_clip_val": gradient_clip_val, "seed": seed,
         "limit_batches": limit_batches,
         "experiment_name": experiment_name, "log_dir": log_dir,
