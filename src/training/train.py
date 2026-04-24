@@ -56,7 +56,7 @@ app = typer.Typer(help="Train the ASR Model Selector on unified parquet features
 MODEL_DIMS = {
     "hubert":   1024,  # facebook/hubert-large-ls960-ft
     "whisper":  512,   # openai/whisper-base
-    "wav2vec2": 768,   # facebook/wav2vec2-base-960h
+    "wav2vec2": 1024,   # facebook/wav2vec2-base-960h
 }
 
 
