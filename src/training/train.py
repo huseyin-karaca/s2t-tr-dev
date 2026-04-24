@@ -33,7 +33,10 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
+import torch.serialization
 import typer
+
+torch.serialization.add_safe_globals([np._core.multiarray.scalar])
 from pytorch_lightning.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
@@ -336,7 +339,7 @@ def train(
     callbacks = [
         ModelCheckpoint(
             dirpath=os.path.join(log_dir, experiment_name, "checkpoints"),
-            filename="best-{epoch:02d}-{val/selected_wer:.4f}",
+            filename="best-{epoch:02d}",
             monitor="val/selected_wer",
             mode="min",
             save_top_k=3,
