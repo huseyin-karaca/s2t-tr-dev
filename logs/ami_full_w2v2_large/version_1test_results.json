@@ -1,0 +1,14 @@
+{
+  "checkpoint": "logs/ami_full_w2v2_large/checkpoints/best-epoch=20.ckpt",
+  "split": "test",
+  "primary_loss": 0.42003610730171204,
+  "aux_loss": 1.118421196937561,
+  "total_loss": 0.7555627226829529,
+  "selected_wer": 0.3888635039329529,
+  "oracle_wer": 0.236915722489357,
+  "wer_gap": 0.1519477516412735,
+  "selection_accuracy": 0.6172741651535034,
+  "freq_hubert": 0.23534072935581207,
+  "freq_whisper": 0.4540412127971649,
+  "freq_wav2vec2": 0.3106180727481842
+}
