@@ -3,53 +3,62 @@
 Loss:
     Primary: Weighted WER = sum(p_k * wer_k) per sample, averaged over batch.
         Differentiable through softmax; pushes probability toward the model
-        with lowest WER for each clip.
-    Auxiliary: Cross-entropy on hard best-model label (with label smoothing).
+        with the lowest WER for each clip.
+    Auxiliary: Cross-entropy on the hard best-model label (with label smoothing).
         Aids early convergence by providing a stronger gradient signal.
 
-Usage:
-    python -m src.experiments.train \
-        --metadata_path data/unified/metadata.json \
-        --batch_size 4 \
-        --max_epochs 50
+Full training run:
+    python -m src.training.train \
+        --parquet-path data/processed/edinburghcstr_ami/combined_features.parquet \
+        --batch-size 8 \
+        --max-epochs 50 \
+        --experiment-name ami_full
+
+Sample run (quick smoke test to verify the pipeline end-to-end):
+    python -m src.training.train \
+        --parquet-path data/processed/edinburghcstr_ami/combined_features.parquet \
+        --batch-size 2 \
+        --max-epochs 1 \
+        --limit-batches 4 \
+        --num-workers 0 \
+        --experiment-name smoke_test
 """
 
-import argparse
 import json
 import logging
 import os
+from typing import Optional
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
+import typer
 from pytorch_lightning.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
+    TQDMProgressBar,
 )
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader, random_split
 
-from src.data_old.dataset import ASRSelectorDataset, collate_fn, MODEL_NAMES
+from src.data.dataset import MODEL_NAMES, ASRFeatureDataset, collate_fn
 from src.models.selector import ASRModelSelector
 
 logger = logging.getLogger(__name__)
 
+app = typer.Typer(help="Train the ASR Model Selector on unified parquet features.")
+
 MODEL_DIMS = {
-    "hubert": 1024,
-    "whisper": 512,
-    "wav2vec2": 768,
+    "hubert":   1024,  # facebook/hubert-large-ls960-ft
+    "whisper":  512,   # openai/whisper-base
+    "wav2vec2": 768,   # facebook/wav2vec2-base-960h
 }
 
 
 class ASRSelectorModule(pl.LightningModule):
-    """Lightning wrapper for the ASR Model Selector.
-
-    Losses:
-        - Primary: Weighted WER = sum(p_k * wer_k).
-        - Optional auxiliary: Cross-entropy on hard best-model labels.
-    """
+    """Lightning wrapper for the ASR Model Selector."""
 
     def __init__(
         self,
@@ -115,13 +124,6 @@ class ASRSelectorModule(pl.LightningModule):
         hidden_states: dict[str, torch.Tensor],
         attention_masks: dict[str, torch.Tensor],
     ) -> torch.Tensor:
-        """Args:
-            hidden_states: Dict of model_name → (B, T_k, D_k).
-            attention_masks: Dict of model_name → (B, T_k) bool.
-
-        Returns:
-            probs: (B, n_models) model selection probabilities.
-        """
         return self.model(hidden_states, attention_masks)
 
     def _compute_loss(
@@ -129,16 +131,7 @@ class ASRSelectorModule(pl.LightningModule):
         probs: torch.Tensor,
         wer_scores: torch.Tensor,
     ) -> tuple[torch.Tensor, dict]:
-        """Compute primary + auxiliary loss and all evaluation metrics.
-
-        Args:
-            probs: Predicted model probabilities of shape (B, n_models).
-            wer_scores: Precomputed WER per model of shape (B, n_models).
-
-        Returns:
-            total_loss: Scalar loss tensor.
-            metrics: Dict of named metric tensors.
-        """
+        """Compute primary + auxiliary loss and evaluation metrics."""
         weighted_wer = (probs * wer_scores).sum(dim=-1)
         primary_loss = weighted_wer.mean()
 
@@ -171,17 +164,9 @@ class ASRSelectorModule(pl.LightningModule):
             "selection_accuracy": selection_accuracy,
             **{f"freq_{k}": v for k, v in selection_freq.items()},
         }
-
         return total_loss, metrics
 
     def training_step(self, batch: dict, batch_idx: int) -> torch.Tensor:
-        """Args:
-            batch: Collated batch dict.
-            batch_idx: Batch index (unused).
-
-        Returns:
-            Scalar training loss.
-        """
         probs = self(batch["hidden_states"], batch["attention_masks"])
         loss, metrics = self._compute_loss(probs, batch["wer_scores"])
 
@@ -192,17 +177,9 @@ class ASRSelectorModule(pl.LightningModule):
                 on_step=True, on_epoch=True,
                 prog_bar=(k in prog_bar_keys),
             )
-
         return loss
 
     def validation_step(self, batch: dict, batch_idx: int) -> torch.Tensor:
-        """Args:
-            batch: Collated batch dict.
-            batch_idx: Batch index (unused).
-
-        Returns:
-            Scalar validation loss.
-        """
         probs = self(batch["hidden_states"], batch["attention_masks"])
         loss, metrics = self._compute_loss(probs, batch["wer_scores"])
 
@@ -213,31 +190,17 @@ class ASRSelectorModule(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=(k in prog_bar_keys),
             )
-
         return loss
 
     def test_step(self, batch: dict, batch_idx: int) -> torch.Tensor:
-        """Args:
-            batch: Collated batch dict.
-            batch_idx: Batch index (unused).
-
-        Returns:
-            Scalar test loss.
-        """
         probs = self(batch["hidden_states"], batch["attention_masks"])
         loss, metrics = self._compute_loss(probs, batch["wer_scores"])
-
         for k, v in metrics.items():
             self.log(f"test/{k}", v, on_epoch=True)
-
         return loss
 
     def configure_optimizers(self) -> dict:
-        """Configure AdamW optimizer with linear warmup + cosine annealing.
-
-        Returns:
-            Dict with optimizer and lr_scheduler config for Lightning.
-        """
+        """AdamW with linear warmup + cosine annealing."""
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.learning_rate,
@@ -253,7 +216,6 @@ class ASRSelectorModule(pl.LightningModule):
             return 0.5 * (1 + np.cos(np.pi * progress))
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
@@ -264,108 +226,106 @@ class ASRSelectorModule(pl.LightningModule):
         }
 
 
-def main():
-    """Entry point for the training script."""
+@app.command()
+def train(
+    # Data
+    parquet_path: str = typer.Option(
+        "data/processed/edinburghcstr_ami/combined_features.parquet",
+        "--parquet-path", "-p",
+        help="Path to the unified combined_features.parquet.",
+    ),
+    train_ratio: float = typer.Option(0.8, "--train-ratio"),
+    val_ratio: float = typer.Option(0.1, "--val-ratio"),
+    max_seq_len: int = typer.Option(2000, "--max-seq-len"),
+    batch_size: int = typer.Option(4, "--batch-size", "-b"),
+    num_workers: int = typer.Option(4, "--num-workers"),
+    # Model
+    d_model: int = typer.Option(256, "--d-model"),
+    n_heads: int = typer.Option(4, "--n-heads"),
+    stage1_layers: int = typer.Option(2, "--stage1-layers"),
+    stage2_layers: int = typer.Option(1, "--stage2-layers"),
+    ffn_dim: int = typer.Option(512, "--ffn-dim"),
+    dropout: float = typer.Option(0.15, "--dropout"),
+    no_cross_attention: bool = typer.Option(False, "--no-cross-attention"),
+    separate_stage1: bool = typer.Option(
+        False, "--separate-stage1",
+        help="Use separate Stage 1 weights per model (default: shared).",
+    ),
+    # Training
+    learning_rate: float = typer.Option(1e-4, "--learning-rate", "--lr"),
+    weight_decay: float = typer.Option(1e-2, "--weight-decay"),
+    warmup_steps: int = typer.Option(200, "--warmup-steps"),
+    max_epochs: int = typer.Option(50, "--max-epochs"),
+    aux_ce_weight: float = typer.Option(0.3, "--aux-ce-weight"),
+    label_smoothing: float = typer.Option(0.1, "--label-smoothing"),
+    gradient_clip_val: float = typer.Option(1.0, "--gradient-clip-val"),
+    seed: int = typer.Option(42, "--seed"),
+    limit_batches: Optional[int] = typer.Option(
+        None, "--limit-batches",
+        help="Limit train/val/test batches per epoch for smoke tests.",
+    ),
+    # Logging
+    experiment_name: str = typer.Option("asr_selector", "--experiment-name"),
+    log_dir: str = typer.Option("logs", "--log-dir"),
+    progress_bar_refresh: int = typer.Option(
+        20, "--progress-bar-refresh",
+        help="tqdm refresh interval in steps (higher = less notebook spam).",
+    ),
+):
+    """Train the ASR Model Selector."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    parser = argparse.ArgumentParser(description="Train ASR Model Selector")
+    pl.seed_everything(seed)
 
-    # Data
-    parser.add_argument("--metadata_path", type=str, default="data/unified/metadata.json")
-    parser.add_argument("--train_ratio", type=float, default=0.8)
-    parser.add_argument("--val_ratio", type=float, default=0.1)
-    parser.add_argument("--max_seq_len", type=int, default=2000)
-    parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--num_workers", type=int, default=4)
-
-    # Model
-    parser.add_argument("--d_model", type=int, default=256)
-    parser.add_argument("--n_heads", type=int, default=4)
-    parser.add_argument("--stage1_layers", type=int, default=2)
-    parser.add_argument("--stage2_layers", type=int, default=1)
-    parser.add_argument("--ffn_dim", type=int, default=512)
-    parser.add_argument("--dropout", type=float, default=0.15)
-    parser.add_argument("--no_cross_attention", action="store_true")
-    parser.add_argument(
-        "--separate_stage1",
-        action="store_true",
-        help="Use separate Stage 1 weights per model (default: shared)",
-    )
-
-    # Training
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
-    parser.add_argument("--weight_decay", type=float, default=1e-2)
-    parser.add_argument("--warmup_steps", type=int, default=200)
-    parser.add_argument("--max_epochs", type=int, default=50)
-    parser.add_argument("--aux_ce_weight", type=float, default=0.3)
-    parser.add_argument("--label_smoothing", type=float, default=0.1)
-    parser.add_argument("--gradient_clip_val", type=float, default=1.0)
-    parser.add_argument("--seed", type=int, default=42)
-
-    # Logging
-    parser.add_argument("--experiment_name", type=str, default="asr_selector")
-    parser.add_argument("--log_dir", type=str, default="logs")
-
-    args = parser.parse_args()
-
-    pl.seed_everything(args.seed)
-
-    full_dataset = ASRSelectorDataset(
-        metadata_path=args.metadata_path,
-        max_seq_len=args.max_seq_len,
+    full_dataset = ASRFeatureDataset(
+        parquet_path=parquet_path,
+        max_seq_len=max_seq_len,
     )
 
     n_total = len(full_dataset)
-    n_train = int(n_total * args.train_ratio)
-    n_val = int(n_total * args.val_ratio)
+    n_train = int(n_total * train_ratio)
+    n_val = int(n_total * val_ratio)
     n_test = n_total - n_train - n_val
-
     logger.info("Dataset splits: train=%d, val=%d, test=%d", n_train, n_val, n_test)
 
     train_ds, val_ds, test_ds = random_split(
         full_dataset,
         [n_train, n_val, n_test],
-        generator=torch.Generator().manual_seed(args.seed),
+        generator=torch.Generator().manual_seed(seed),
     )
 
-    train_loader = DataLoader(
-        train_ds, batch_size=args.batch_size, shuffle=True,
-        collate_fn=collate_fn, num_workers=args.num_workers,
-        pin_memory=True, drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=args.batch_size, shuffle=False,
-        collate_fn=collate_fn, num_workers=args.num_workers,
+    loader_kwargs = dict(
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        num_workers=num_workers,
         pin_memory=True,
     )
-    test_loader = DataLoader(
-        test_ds, batch_size=args.batch_size, shuffle=False,
-        collate_fn=collate_fn, num_workers=args.num_workers,
-        pin_memory=True,
-    )
+    train_loader = DataLoader(train_ds, shuffle=True, drop_last=True, **loader_kwargs)
+    val_loader = DataLoader(val_ds, shuffle=False, **loader_kwargs)
+    test_loader = DataLoader(test_ds, shuffle=False, **loader_kwargs)
 
     steps_per_epoch = len(train_loader)
-    total_steps = steps_per_epoch * args.max_epochs
+    total_steps = steps_per_epoch * max_epochs
 
     lightning_model = ASRSelectorModule(
-        d_model=args.d_model,
-        n_heads=args.n_heads,
-        stage1_layers=args.stage1_layers,
-        stage2_layers=args.stage2_layers,
-        ffn_dim=args.ffn_dim,
-        dropout=args.dropout,
-        use_cross_attention_bridge=not args.no_cross_attention,
-        share_stage1_weights=not args.separate_stage1,
-        max_seq_len=args.max_seq_len,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
+        d_model=d_model,
+        n_heads=n_heads,
+        stage1_layers=stage1_layers,
+        stage2_layers=stage2_layers,
+        ffn_dim=ffn_dim,
+        dropout=dropout,
+        use_cross_attention_bridge=not no_cross_attention,
+        share_stage1_weights=not separate_stage1,
+        max_seq_len=max_seq_len,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        warmup_steps=warmup_steps,
         total_steps=total_steps,
-        aux_ce_weight=args.aux_ce_weight,
-        label_smoothing=args.label_smoothing,
+        aux_ce_weight=aux_ce_weight,
+        label_smoothing=label_smoothing,
     )
 
     param_counts = lightning_model.model.count_parameters()
@@ -375,7 +335,7 @@ def main():
 
     callbacks = [
         ModelCheckpoint(
-            dirpath=os.path.join(args.log_dir, args.experiment_name, "checkpoints"),
+            dirpath=os.path.join(log_dir, experiment_name, "checkpoints"),
             filename="best-{epoch:02d}-{val/selected_wer:.4f}",
             monitor="val/selected_wer",
             mode="min",
@@ -389,24 +349,30 @@ def main():
             verbose=True,
         ),
         LearningRateMonitor(logging_interval="step"),
+        TQDMProgressBar(refresh_rate=progress_bar_refresh),
     ]
 
-    tb_logger = TensorBoardLogger(
-        save_dir=args.log_dir,
-        name=args.experiment_name,
-    )
+    tb_logger = TensorBoardLogger(save_dir=log_dir, name=experiment_name)
 
-    trainer = pl.Trainer(
-        max_epochs=args.max_epochs,
+    trainer_kwargs = dict(
+        max_epochs=max_epochs,
         callbacks=callbacks,
         logger=tb_logger,
-        gradient_clip_val=args.gradient_clip_val,
+        gradient_clip_val=gradient_clip_val,
         accelerator="auto",
         devices=1,
         precision="16-mixed",
         log_every_n_steps=10,
         deterministic=True,
     )
+    if limit_batches is not None:
+        trainer_kwargs.update(
+            limit_train_batches=limit_batches,
+            limit_val_batches=limit_batches,
+            limit_test_batches=limit_batches,
+        )
+
+    trainer = pl.Trainer(**trainer_kwargs)
 
     logger.info("Starting training...")
     trainer.fit(lightning_model, train_loader, val_loader)
@@ -414,11 +380,29 @@ def main():
     logger.info("Running test evaluation...")
     trainer.test(lightning_model, test_loader, ckpt_path="best")
 
-    results_dir = os.path.join(args.log_dir, args.experiment_name)
+    results_dir = os.path.join(log_dir, experiment_name)
+    os.makedirs(results_dir, exist_ok=True)
+    config_snapshot = {
+        "parquet_path": parquet_path,
+        "train_ratio": train_ratio, "val_ratio": val_ratio,
+        "max_seq_len": max_seq_len, "batch_size": batch_size,
+        "num_workers": num_workers,
+        "d_model": d_model, "n_heads": n_heads,
+        "stage1_layers": stage1_layers, "stage2_layers": stage2_layers,
+        "ffn_dim": ffn_dim, "dropout": dropout,
+        "use_cross_attention_bridge": not no_cross_attention,
+        "share_stage1_weights": not separate_stage1,
+        "learning_rate": learning_rate, "weight_decay": weight_decay,
+        "warmup_steps": warmup_steps, "max_epochs": max_epochs,
+        "aux_ce_weight": aux_ce_weight, "label_smoothing": label_smoothing,
+        "gradient_clip_val": gradient_clip_val, "seed": seed,
+        "limit_batches": limit_batches,
+        "experiment_name": experiment_name, "log_dir": log_dir,
+    }
     with open(os.path.join(results_dir, "config.json"), "w") as f:
-        json.dump(vars(args), f, indent=2)
+        json.dump(config_snapshot, f, indent=2)
     logger.info("Training complete. Logs saved to %s", results_dir)
 
 
 if __name__ == "__main__":
-    main()
+    app()
