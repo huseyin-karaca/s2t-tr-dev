@@ -9,6 +9,7 @@ class DatasetConfig:
     name: str
     subset: str
     split_name: str  # 'split' yerine 'split_name' diyelim, karışmasın
+    text_column: str = "text"  # Reference transcript column name in the dataset.
     revision: str = "refs/convert/parquet"
     interim_path: str = "data/interim"
     
@@ -41,7 +42,8 @@ ALL_DATASETS = {
     "voxpopuli": DatasetConfig(
         name="facebook/voxpopuli",
         subset="en_accented",
-        split_name="test"
+        split_name="test",
+        text_column="normalized_text",
     ),
 }
 

@@ -52,8 +52,7 @@ def process_combination(ds_cfg, model_cfg, device: str, batch_size: int):
         audio_arrays = [a["array"] for a in batch["audio"]]
         srs = [a["sampling_rate"] for a in batch["audio"]]
 
-        text_col = "text" if "text" in batch else "transcription"
-        targets = [clean_text(t) for t in batch[text_col]]
+        targets = [clean_text(t) for t in batch[ds_cfg.text_column]]
 
         # Note: Ensure that predict_batch returns frame-level (2D) embeddings 
         # (e.g., shape: [num_frames, hidden_dim]) rather than pooled 1D embeddings.
