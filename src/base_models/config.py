@@ -103,9 +103,16 @@ class BaseModelConfig:
 
 
 # --- MODEL CATALOG ---
-WAV2VEC2_BASE = BaseModelConfig(
-    alias="w2v2",
-    model_id="facebook/wav2vec2-base-960h",
+# WAV2VEC2_BASE = BaseModelConfig(
+#    alias="w2v2",
+#    model_id="facebook/wav2vec2-base-960h",
+#    model_class=Wav2Vec2ForCTC,
+#    processor_class=Wav2Vec2Processor,
+# )
+
+WAV2VEC2_LARGE_ROBUST = BaseModelConfig(
+    alias="w2v2-large-robust",
+    model_id="facebook/wav2vec2-large-robust-ft-swbd-300h",
     model_class=Wav2Vec2ForCTC,
     processor_class=Wav2Vec2Processor,
 )
@@ -133,7 +140,7 @@ WHISPER_BASE = BaseModelConfig(
 )
 
 ALL_BASE_MODELS = {
-    "w2v2":    WAV2VEC2_BASE,
+    "w2v2":    WAV2VEC2_LARGE_ROBUST,
     "hubert":  HUBERT_LARGE,
     "d2v":     DATA2VEC_BASE,
     "whisper": WHISPER_BASE,
