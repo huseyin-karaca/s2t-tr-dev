@@ -19,20 +19,35 @@
 
 \usetikzlibrary{arrows.meta,positioning}
 
-\title{}
-\date{}  % This hides the date
-\author{}  % Optional: hides the author if you don’t want one
+% \title{Frame-Level Hierarchical Routing for Adaptive Speech-to-Text Model Selection}
+% Alternative title candidates:
+\title{Hierarchical Transformer Routing over Frame-Level Encoder Embeddings for Adaptive ASR}
+% \title{Adaptive ASR Model Selection via Per-Clip Routing on Frame-Level Encoder Outputs}
+% \title{Routing Among Pretrained ASR Experts Using Frame-Level Encoder Representations}
+% \title{A Hierarchical Transformer Router for Per-Clip Selection Among Pretrained ASR Models}
+\author{A.~Samil~Namli$^{*}$, 
+        Huseyin~Karaca$^{*}$,
+        and Suleyman S.~Kozat,~\IEEEmembership{Senior~Member,~IEEE}
+\thanks{$^{*}$A. S. Namli and H. Karaca contributed equally to this work.}
+\thanks{A. S. Namli, H. Karaca, and S. S. Kozat are with Bilkent University, Ankara, Turkiye. A. S. Namli and H. Karaca are also with Turk Telekom, Ankara, Turkiye (e-mails: \{samil.namli, huseyin.karaca\}@bilkent.edu.tr; kozat@ee.bilkent.edu.tr).}%
+\thanks{This work is supported by The Scientific and Technological Research Council of Turkiye (TUBITAK) 1515 Frontier R\&D Laboratories Support Program for Turk Telekom 6G R\&D Lab under project number 5249902, and by the TUBITAK 2210-A program.}%
+}
+\date{}
+
 \begin{document}
 
-% \maketitle 
+\maketitle 
 
-% \begin{abstract}
+\begin{abstract}
 
-% \end{abstract}
+\end{abstract}
 
-% \begin{IEEEkeywords}
-
-% \end{IEEEkeywords}
+\begin{IEEEkeywords}
+Speech recognition, automatic speech recognition (ASR),
+speech-to-text, model selection, adaptive routing, mixture of
+experts, transformer, frame-level embeddings, ensemble of pretrained
+models.
+\end{IEEEkeywords}
 
 
 \section{Introduction}
@@ -50,34 +65,34 @@ committing to a fixed system. Such adaptive strategies aim to
 retain the efficiency of single-model inference while benefiting
 from the diversity of multiple pretrained systems.
 
-A key difficulty in this setting is predicting the performance of candidate models without explicitly executing them. Observable properties of the audio signal, such as acoustic
-statistics, temporal dynamics, and learned representations,
-provide useful cues for this purpose. Nevertheless, many
-existing approaches treat each audio segment as an independent
-unit, making selection decisions based solely on local
-information. This ignores an important aspect of speech: its
-inherently sequential nature.
+A key difficulty in this setting is predicting the performance of
+candidate models without explicitly executing them. Observable
+properties of the audio signal, such as acoustic statistics, temporal
+dynamics, and learned representations, provide useful cues for this
+purpose. Nevertheless, many existing approaches summarize an audio
+clip into a single pooled descriptor before predicting which expert
+to use. This compression discards information that is intrinsic to
+speech: each clip is itself a temporal signal whose acoustic
+properties evolve from frame to frame.
 
-In practical scenarios such as conversations, meetings, or
-continuous recordings, audio segments are temporally
-correlated. Consecutive segments often share common attributes,
-including speaker identity, background conditions, and channel
-characteristics. Furthermore, transitions between different
-acoustic regimes typically occur gradually rather than
-instantaneously. As a result, the suitability of a particular
-STT model at a given time step is influenced not only by the
-current segment, but also by its surrounding context.
+Within a single clip, the speaker, the channel, the background, and
+the spoken content are rarely homogeneous. A meeting utterance can
+contain a stretch of overlapping speech followed by a clean segment;
+a parliamentary recording can drift between near-field and reverberant
+microphone conditions; a conversation can shift in speaking rate or
+emotional emphasis. The expert that transcribes such a clip most
+accurately is typically determined by these intra-clip dynamics,
+rather than by any aggregate statistic of the clip.
 
-Neglecting these temporal relationships can lead to unstable
-or suboptimal selection behavior, particularly in long-form
-audio where conditions evolve over time. This motivates the
-development of adaptive STT frameworks that explicitly model
-sequential dependencies and incorporate contextual information
-into the selection process. In this work, we explore this
-direction by formulating STT model selection as a sequential
-decision problem and introducing a context-aware routing
-framework that leverages temporal structure to improve
-selection accuracy.
+Neglecting these intra-clip relationships can lead to unstable or
+suboptimal routing behavior, particularly in long-form audio where
+conditions vary within an utterance. This motivates the development of
+adaptive STT frameworks that explicitly model the frame-level temporal
+structure of each clip when routing among experts. In this work, we
+follow this direction by formulating STT model selection as a per-clip
+decision problem and introducing a hierarchical transformer router that
+operates directly on the frame-level encoder representations of each
+clip, rather than on pooled descriptors.
  
  %By contrast, dynamic architectures such as sparsely-gated Mixture-of-Experts (MoE) networks can adaptively allocate capacity per input \cite{you2021speechmoe,fedus2021switch}. For example, GShard showed that conditional computation can scale Transformers to hundreds of billions of parameters without raising per-token cost
  %and the Switch Transformer simplifies MoE routing to train trillion-parameter models efficiently In speech, dynamic routers have been explored: the SpeechMoE family
@@ -95,24 +110,58 @@ augments self-attention with convolutional modules to better model local speech 
 ) learns useful speech representations, allowing models to reach very low error rates with limited labels. Streaming extensions include the RNN-Transducer
  and Transformer-Transducer models (which combine attention with transducer output), as well as chunk-based Conformers for real-time use. These models focus on accuracy and (for streaming ones) low latency, but remain static in that all inputs use the same network.
 
-Streaming ASR places strict latency constraints. RNN-T was a seminal approach for on-the-fly ASR with fixed delay. Recent efforts apply Transformer/Conformer backbones to streaming by attention truncation or recurrence (e.g. Emformer, Streaming Transformer-Transducer) to meet real-time budgets. These approaches optimize architecture to reduce delay but do not adapt computation per input. In contrast, our router is inherently sequential and can be used in a streaming pipeline: at each segment boundary it uses contextual info to pick a model, then immediately invokes that expert (with only its output carrying the latency cost). Thus latency stays low (one model’s inference), while adaptation occurs invisibly in parallel.
+Latency-Constrained ASR. Streaming variants such as the RNN-T and
+Transformer/Conformer transducers (e.g.\ Emformer, Streaming
+Transformer-Transducer) optimize the encoder architecture to meet
+real-time budgets but do not adapt computation per input. Our work
+is orthogonal: instead of changing the inner workings of a single
+model, we route a clip to one of several pretrained STT systems and
+decode only that one. The decoding cost therefore matches that of a
+single ASR model, while the diversity of the expert pool is
+preserved.
 
-Routing and Mixture-of-Experts: Our work is inspired by sparse MoE and conditional computation. Early Mixture-of-Experts (Shazeer et al. 2017) enabled enormous capacity by routing tokens to only one expert subnetwork
-. This idea was massively scaled in Google’s GShard (2020) and Follow-up Switch Transformer (2021)
-: models with hundreds of billions of parameters were trained with sparsely-gated MoE layers at constant cost. GShard demonstrated a 600B-parameter translation model using dynamic routing
-, while Switch simplified the routing algorithm for efficiency
-. Beyond NLP, MoE has been applied in vision and other domains as well. All these models perform intra-network routing: each input token or frame is dispatched to expert feedforward layers or networks. By contrast, our router performs inter-model routing: it selects among whole ASR models (or large subnetworks) at each segment. This yields coarse-grained conditional computation: we trade finer token-level routing for more efficient segment-level decisions.
+Routing and Mixture-of-Experts. Our work is inspired by sparse MoE
+and conditional computation. Early Mixture-of-Experts (Shazeer et
+al.\ 2017) enabled enormous capacity by routing tokens to only one
+expert subnetwork. This idea was scaled in GShard (2020) and Switch
+Transformer (2021), where models with hundreds of billions of
+parameters were trained with sparsely-gated MoE layers at constant
+cost. Beyond NLP, MoE has been applied in vision and other domains
+as well. All these models perform intra-network routing: each input
+token or frame is dispatched to an expert feedforward layer inside a
+single network. In contrast, our router performs inter-model
+routing: it selects among independently trained STT systems at the
+clip level. This yields coarse-grained conditional computation that
+trades token-level granularity for whole-system specialization and
+single-pipeline decoding cost.
 
-There is growing work on adaptive or multi-domain ASR. You et al. (2021) proposed SpeechMoE, adding MoE layers to a CTC model with a learned embedding for the router
-. SpeechMoE achieved substantial CER reductions (7–23% relative) over a static model
- by dynamically routing frames to experts. A follow-up SpeechMoE2 (2022) improved routing by feeding domain- and accent-embeddings to the router
-. More recently, Hu et al. (2023) introduced a Switch-Conformer MoE: a multilingual streaming Conformer with MoE FFN layers. They report an 11.9% relative WER drop over a baseline, activating only 53% of parameters during inference
-. Our router differs from these in granularity and scope: whereas SpeechMoE layers route individual frames within a model, our router chooses an entire expert per segment. This yields lower overall switching frequency and allows specialization at the whole-model level.
+There is growing work on adaptive or multi-domain ASR. You et al.\
+(2021) proposed SpeechMoE, adding MoE layers to a CTC model with a
+learned embedding for the router. SpeechMoE achieved substantial CER
+reductions (7--23\% relative) over a static model by dynamically
+routing frames to experts. A follow-up SpeechMoE2 (2022) improved
+routing by feeding domain- and accent-embeddings to the router.
+Hu et al.\ (2023) introduced a Switch-Conformer MoE, a multilingual
+streaming Conformer with MoE FFN layers, reporting an $11.9\%$
+relative WER drop while activating only $53\%$ of parameters at
+inference. Our router differs from these in granularity and scope:
+whereas SpeechMoE-style layers route individual frames within one
+trained model, we choose among entire pretrained STT systems for an
+entire clip, using the frame-level encoder outputs of those systems
+as input to the routing decision.
 
-Conditional Computation and Routing: More broadly, conditional computation in neural networks includes techniques like dynamic skipping of layers (e.g. Skip-RNN, BlockDrop), early-exit classifiers, or adaptive layers. For sequence models, some work (e.g. Routing Transformer
-) learns sparse attention patterns via content-based routing, reducing complexity from quadratic to sub-quadratic. Roy et al.’s Routing Transformer routes queries to a subset of keys using a k-means router, achieving state-of-the-art language modeling on long contexts
-. This is complementary to our goal: they reduce attention cost, while we route between entire subnetworks. Other NLP works (e.g. BASELayers
-) explore sparse capacity allocation for multi-task learning, highlighting issues like expert specialization and training stability. In our speech context, we assume expert models are pre-trained on diverse data, and focus the router’s learning on choosing among them. The main trade-off is between granularity and overhead: our segment-level router has fewer switching decisions (favoring stability and efficiency) but may be less responsive to rapid changes than frame-level gating. We mitigate this with temporal context and cost-sensitive loss.
+Conditional Computation and Routing. More broadly, conditional
+computation in neural networks includes techniques such as dynamic
+skipping of layers (e.g.\ Skip-RNN, BlockDrop), early-exit
+classifiers, and adaptive depth. For sequence models, the Routing
+Transformer learns sparse attention patterns via content-based
+routing, reducing complexity from quadratic to sub-quadratic, and
+BASE Layers explore sparse capacity allocation for multi-task
+learning. These works route within a single network. In our setting,
+the experts are independently pretrained STT systems with no shared
+parameters; the router learns only how to choose among them. This
+keeps the experts black-boxed and lets the router benefit from
+diverse pretraining without requiring joint optimization.
 
 % A large body of research has focused on improving the robustness of
 % automatic speech recognition systems under diverse acoustic conditions,
@@ -199,44 +248,37 @@ Our contributions are summarized as follows:
 
 \begin{itemize}
 
-\item We introduce a sequential adaptive STT routing framework that
-extends instance-wise model selection to a sequence-aware setting,
-where expert selection decisions are conditioned on the temporal
-context of neighboring audio segments. This enables the system to
-capture evolving acoustic conditions and improve selection reliability
-in long-form speech.
+\item We introduce an adaptive STT routing framework that operates on
+the frame-level encoder representations of each audio clip, rather
+than on a single pooled descriptor. This preserves the intra-clip
+temporal structure that informs which expert is best suited for a
+given clip and avoids the information loss of pooling-based routers.
 
-\item We formulate adaptive STT model selection as a contextual
-sequence decision problem and propose a transformer-based routing
-function that maps sequences of segment-level feature representations
-to expert preference distributions. The model leverages self-attention
-to capture temporal dependencies such as speaker continuity,
-environment persistence, and gradual acoustic drift.
+\item We formulate adaptive STT model selection as a per-clip
+classification problem over a fixed pool of pretrained ASR experts
+and propose a hierarchical transformer router. A per-expert temporal
+encoder summarizes each expert's frame sequence with attention-based
+pooling, an optional cross-attention bridge lets each summary attend
+to the frame-level evidence of the other experts, and a cross-expert
+fusion stage produces the final routing decision.
 
-\item We develop a cost-sensitive training objective based on expected
-transcription error, which directly optimizes the routing model with
-respect to task-level performance measures such as WER. The framework
-naturally supports alternative error metrics, making it loss-agnostic
-and adaptable to different evaluation criteria.
+\item We develop a composite training objective that combines a
+weighted-WER loss, which directly minimizes the expected transcription
+error, with auxiliary cross-entropy terms (hard and temperature-
+controlled soft) that strengthen the gradient signal early in
+training. The framework supports alternative error metrics without
+modifying the routing architecture.
 
-\item We incorporate temporal consistency into the routing process
-through a context-aware formulation that promotes stable expert
-selection across consecutive segments, reducing unnecessary switching
-while preserving responsiveness to meaningful changes in acoustic
-conditions.
+\item Our framework performs input-adaptive STT model selection using
+a lightweight router that consumes encoder hidden states already
+produced as a by-product of any STT pipeline. At inference time, only
+the selected expert's full STT pipeline is decoded, so the decoding
+cost matches that of running a single ASR model.
 
-\item Our framework performs input-adaptive STT model selection using a
-lightweight routing mechanism operating on pre-extracted acoustic and
-embedding-based features. The approach remains feature-agnostic and
-compatible with arbitrary discriminative representations, while
-introducing only minimal computational overhead beyond a single STT
-model execution at inference time.
-
-\item The proposed framework is routing-model agnostic and can be
-instantiated using different sequence modeling architectures. While we
-focus on transformer-based routing in this work, the formulation allows
-for alternative temporal models such as recurrent or convolutional
-sequence learners without modifying the overall framework.
+\item The proposed framework is routing-model agnostic. While we
+focus on a hierarchical transformer router in this work, the
+formulation supports alternative sequence learners, such as recurrent
+or convolutional models, without modifying the rest of the pipeline.
 
 \end{itemize}
 
@@ -244,522 +286,817 @@ sequence learners without modifying the overall framework.
 \subsection{Organization}
 
 The remainder of the paper is organized as follows.
-\cref{sec:problem} formalizes the sequential adaptive STT selection
+\cref{sec:problem} formalizes the per-clip adaptive STT selection
 problem. \cref{sec:workdone} presents the proposed framework,
-including the sequential feature representation, transformer-based
-routing model, and training objective. \cref{sec:experiments}
-describes the experimental setup and empirical evaluation.
-Finally, \cref{sec:conclusion} concludes the paper.
+including the frame-level feature representation, the hierarchical
+transformer router, and the training objective.
+\cref{sec:experiments} describes the experimental setup and empirical
+evaluation. Finally, \cref{sec:conclusion} concludes the paper.
 
 \section{Problem Description}
 \label{sec:problem}
 
-We study adaptive speech-to-text (STT) transcription for temporally ordered audio streams composed of a large number of audio segments denoted by $\{x_t\}_{t=1}^{T}$, where $T$ is significantly large. In realistic speech recordings such as conversations, meetings, or long-form audio streams, the acoustic conditions and speaker characteristics evolve over time. Properties of each audio segment, including background noise level, speaker identity, accent, speaking rate, recording quality, and acoustic clarity, may vary gradually or abruptly across the sequence. Consequently, different state-of-the-art STT algorithms may exhibit varying levels of transcription performance depending on the acoustic conditions associated with each segment \cite{yu2016asrdeep,li2014overviewrobust}. Since these conditions change over time and are not known in advance, it is generally unknown which STT algorithm will perform best for each segment in the sequence.
+We study adaptive speech-to-text (STT) transcription at the level of individual audio clips. Let $\{x_n\}_{n=1}^{N}$ denote a collection of $N$ audio clips, where each clip $x_n$ is itself a temporal signal composed of a sequence of acoustic frames. The frame-level structure within a clip carries information about background noise, speaker identity, accent, speaking rate, recording quality, and short-term acoustic clarity. Different state-of-the-art STT algorithms exhibit different transcription performance depending on these intra-clip acoustic conditions \cite{yu2016asrdeep,li2014overviewrobust}, and the best-performing algorithm for a given clip is generally not known in advance.
 
-Let $\mathcal{A} = \{A_1, A_2, \ldots, A_K\}$ denote a finite set of $K$ distinct STT algorithms, where $A_j \in \mathcal{A}$ represents the $j$-th algorithm. For each audio segment $x_t$, the transcription produced by the $j$-th STT algorithm is denoted by
+Let $\mathcal{A} = \{A_1, A_2, \ldots, A_K\}$ denote a finite set of $K$ pretrained STT algorithms, where $A_j \in \mathcal{A}$ represents the $j$-th algorithm. For each clip $x_n$, the transcription produced by the $j$-th algorithm is
 \[
-T_{t,j} = A_j(x_t).
+T_{n,j} = A_j(x_n).
 \]
-Each transcription $T_{t,j}$ can be evaluated using a transcription error measure defined with respect to the ground-truth transcription $R_t$ associated with segment $x_t$. Using standard evaluation metrics such as the Word Error Rate (WER) or other suitable transcription accuracy measures \cite{li2014overviewrobust}, we define the transcription loss incurred by using algorithm $A_j$ on segment $x_t$ as
+Each transcription $T_{n,j}$ is compared against the ground-truth reference $R_n$ using a transcription error measure. Using standard metrics such as the Word Error Rate (WER) \cite{li2014overviewrobust}, the transcription loss incurred by using algorithm $A_j$ on clip $x_n$ is
 \[
-\ell(T_{t,j}, R_t),
+\ell(T_{n,j}, R_n),
 \]
 where $\ell(\cdot,\cdot)$ denotes the chosen error metric.
 
-In practice, applying all $K$ STT algorithms to every incoming segment in order to select the best transcription is computationally expensive and inefficient. Instead, the goal is to select a single STT algorithm for each segment in a manner that minimizes the overall transcription error across the entire sequence. Let $j_t \in \{1,2,\ldots,K\}$ denote the index of the STT algorithm selected for segment $x_t$. The resulting transcription for that segment is therefore given by
+Applying all $K$ algorithms to every incoming clip in order to pick the best transcription is computationally expensive. Instead, the goal is to select a single algorithm $j_n \in \{1,\dots,K\}$ for each clip such that the resulting transcription
 \[
-\hat{T}_t = A_{j_t}(x_t).
+\hat{T}_n = A_{j_n}(x_n)
 \]
-
-The objective is to determine a sequence of algorithm selections $\{j_t\}_{t=1}^{T}$ that minimizes the cumulative transcription error over the entire audio stream:
+minimizes the cumulative transcription error across the dataset:
 \begin{center}
 $\displaystyle
-\sum_{t=1}^{T} \ell(T_{t,j_t}, R_t).
+\sum_{n=1}^{N} \ell(T_{n,j_n}, R_n).
 $
 \end{center}
 
-Unlike independent algorithm selection problems where each decision is made solely based on the current input, the performance of STT algorithms may exhibit temporal correlations across consecutive audio segments due to evolving acoustic environments, speaker continuity, or recording conditions. Therefore, selecting the most suitable algorithm for a given segment may benefit from considering information from neighboring segments within the sequence. In the following section, we introduce a framework that models this sequential algorithm selection problem and determines the STT algorithm for each segment while accounting for temporal dependencies across the audio stream.
+A key challenge is that each clip is internally non-stationary: speaker, channel, and background can shift across frames within the same clip, and these intra-clip dynamics influence which algorithm transcribes the clip most accurately. Selection mechanisms that compress a clip into a single pooled feature vector discard this temporal structure and lose information that is relevant to the choice of expert. The framework introduced in the next section instead operates directly on frame-level encoder representations and uses a transformer-based router to model the temporal structure of each clip when picking an expert.
 
 
-\section{Workdone}
+\section{Proposed Model}
+
 \label{sec:workdone}
 
-% \begin{figure*}[t]
-%     \centering
-%     \includegraphics[width=1\linewidth]{figures/diagram.pdf}
-%     \caption{Overview of the proposed sequential adaptive STT routing framework.}
-%     \label{fig:sequential-routing-diagram}
-% \end{figure*}
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/diagram.pdf}
+    \caption{Overview of the proposed adaptive ASR model selection
+    framework. Each base ASR encoder produces a 2-D frame-level
+    embedding tensor $\mathbf{H}_n^{(k)}\in\mathbb{R}^{T_n^{(k)}\times D_k}$
+    with model-specific frame count $T_n^{(k)}$ and hidden dimension
+    $D_k$; no temporal pooling is applied. Per-model linear
+    projections, sinusoidal positional encodings, and learnable
+    model-identity embeddings bring the heterogeneous sequences into
+    a shared dimension. A shared Stage~1 transformer encoder
+    summarizes each expert's frame sequence with a CLS token; an
+    optional cross-attention bridge lets each summary attend to the
+    frame-level outputs of the other experts; and a Stage~2
+    transformer fuses the summaries through a global CLS token,
+    which is mapped by a small MLP and softmax to the routing
+    distribution $\mathbf{w}_n$. Only the argmax expert
+    $A_{j_n}$ is decoded at inference.}
+    \label{fig:architecture}
+\end{figure*}
 
 \subsection{Algorithm Overview}
 
-The proposed framework extends adaptive STT model selection to the
-sequential setting by exploiting temporal dependencies across
-consecutive audio segments. The overall system operates in two
-phases: an offline training phase and an online inference phase,
-as illustrated in Fig.~\ref{fig:sequential-routing-diagram}. The
-offline phase learns a routing model that captures how the relative
-performance of different STT experts evolves across a sequence of
-audio segments, while the online phase uses the trained routing model
-to select an appropriate expert for each incoming segment in real time.
+The proposed framework performs adaptive STT model selection at the
+clip level by exploiting the frame-level temporal structure of each
+audio clip. The system operates in two phases: an offline training
+phase and an online inference phase, as illustrated in
+Fig.~\ref{fig:architecture}. The offline phase learns a
+routing model that predicts, from the frame-level encoder
+representations of a clip, which expert is most likely to transcribe
+that clip with the lowest error. The online phase uses the trained
+router to select an expert for each incoming clip and invokes only
+that expert to produce the final transcription.
 
 In the offline training phase, the system is provided with a
-collection of labeled audio recordings that are partitioned into
-temporally ordered segments $\{x_t\}_{t=1}^{T}$. For each segment,
-a feature representation $\mathbf{z}_t$ is extracted using the
-feature pipeline described in Section~\ref{sec:features}. These
-representations may include acoustic descriptors, signal statistics,
-and neural speech embeddings that characterize the acoustic
-properties of the input segment. In contrast to independent
-instance-level selection, the framework processes sequences of
-segment-level representations to capture contextual relationships
-across neighboring segments. For each training sequence, all STT
-experts $\{A_1,\dots,A_K\}$ are evaluated on the corresponding
-audio segments to obtain their transcription outputs and the
-associated transcription losses defined in
-Section~\ref{sec:problem}. These evaluations provide supervision
-signals indicating the relative suitability of each expert for
-different segments within the sequence.
+collection of labeled audio clips $\{(x_n,R_n)\}_{n=1}^{N}$. For each
+clip $x_n$ and each expert $A_k\in\mathcal{A}$, the encoder of $A_k$
+is run once on $x_n$ to obtain a frame-level hidden-state sequence
+\[
+\mathbf{H}_n^{(k)}=
+\bigl(\mathbf{h}_{n,1}^{(k)},\dots,\mathbf{h}_{n,T_n^{(k)}}^{(k)}\bigr),
+\qquad
+\mathbf{h}_{n,t}^{(k)}\in\mathbb{R}^{D_k},
+\]
+where $T_n^{(k)}$ is the number of encoder frames produced by expert
+$A_k$ for clip $x_n$ and $D_k$ is its hidden-state dimension. We use
+$\mathbf{H}_n^{(k)}$ rather than a pooled summary so that intra-clip
+acoustic dynamics are preserved. In parallel, the full STT pipeline of
+each expert is run on the clip to produce its candidate transcription
+$T_{n,k}=A_k(x_n)$ and the corresponding transcription error
+$\mathrm{WER}(T_{n,k},R_n)$. These errors serve as the supervision
+signal that tells the router which expert was best for which clip.
 
-Using these sequence-level observations, the routing model learns
-to predict the relative performance of the candidate STT experts
-conditioned on the contextual representation of the input sequence.
-The parameters of the routing model are optimized during the offline
-phase by minimizing the cumulative transcription loss over the
-training data, allowing the system to learn how temporal patterns in
-the audio stream relate to the performance of different experts.
+The router takes the full set of frame-level hidden-state sequences
+$\{\mathbf{H}_n^{(k)}\}_{k=1}^{K}$ as input and produces a probability
+vector $\mathbf{w}_n=(w_{n,1},\dots,w_{n,K})$ over the experts. The
+parameters of the router are optimized to align $\mathbf{w}_n$ with
+the empirical per-clip error vector $(\mathrm{WER}(T_{n,k},R_n))_{k=1}^{K}$,
+using the training objective described in
+Section~\ref{subsec:training_objective}.
 
-In the online inference phase, the system receives a stream of
-incoming audio segments $\{x_t\}$. For each segment, the feature
-vector $\mathbf{z}_t$ is extracted as shown in
-Fig.~\ref{fig:sequential-routing-diagram}. The routing model then
-processes the current segment representation together with its
-recent temporal context to estimate a weight vector
-$\mathbf{w}_t$ over the candidate experts. A single STT algorithm
-$A_{j_t}$ is selected according to the highest predicted weight,
-and the final transcription $\hat{T}_t$ is obtained by executing
-only the selected expert on the input segment. Because only one
-STT model is executed at inference time, the proposed framework
-retains the computational efficiency of single-model inference
-while dynamically adapting the expert selection policy to the
-evolving acoustic conditions of the audio stream.
+In the online inference phase, the system receives a new audio clip
+$x_n$. Each base encoder is run on $x_n$ to obtain its frame-level
+hidden states $\mathbf{H}_n^{(k)}$, which are passed through the
+trained router $g_\theta$ to produce $\mathbf{w}_n$. The expert with
+the highest predicted probability,
+\[
+j_n=\arg\max_{k\in\{1,\dots,K\}} w_{n,k},
+\]
+is selected and only its decoder is executed on the clip to produce
+the final transcription $\hat{T}_n = A_{j_n}(x_n)$. Because only one
+full STT pipeline is decoded per clip, the proposed framework retains
+the runtime cost of a single-model system on the decoding side, with
+the additional cost of $K$ encoder forward passes and one router
+forward pass.
 
-The detailed components of the proposed framework, including the
-sequence representation, the routing model, and the training
-procedure, are described in the following subsections.
-
-
-
-\textbf{Remark 1.} \textit{}
+The detailed components of the framework, including the frame-level
+feature representation, the hierarchical routing architecture, and
+the training procedure, are described in the following subsections.
 
 \begin{algorithm}
 \small
-\caption{\small Online Sequential STT Model Selection}
-\label{alg:sequential-online-overview}
+\caption{\small Online STT Model Selection}
+\label{alg:online_overview}
 
 \textbf{Inputs:}
 \begin{itemize}
-    \item Incoming audio segment $x_t$
-    \item Context window length $L$
-    \item Set of audio feature extraction functions $\mathbb{F}(\cdot)$
-    \item Trained sequential routing function $g_{\theta}(\cdot)$
-    \item STT expert pool $\mathcal{A}=\{A_1,\dots,A_K\}$
+    \item Audio clip $x_n$
+    \item Set of base ASR encoders $\{E_1,\dots,E_K\}$ associated with the experts $\mathcal{A}=\{A_1,\dots,A_K\}$
+    \item Trained routing function $g_{\theta}(\cdot)$
 \end{itemize}
 
 \textbf{Outputs:}
 \begin{itemize}
-    \item Final transcription $\widehat{T}_t$ for audio segment $x_t$
+    \item Final transcription $\widehat{T}_n$ for clip $x_n$
 \end{itemize}
 
 \textbf{Inference Steps:}
 \begin{algorithmic}[1]
 
-\State Extract segment-level features:
+\State For each expert, extract frame-level encoder representations:
 \[
-\mathbf{z}_t \leftarrow \mathbb{F}(x_t)
+\mathbf{H}_n^{(k)} \leftarrow E_k(x_n), \qquad k=1,\dots,K
 \]
 
-\State Update contextual feature sequence:
+\State Compute expert selection logits using the routing model:
 \[
-Z_t \leftarrow (\mathbf{z}_{t-L+1},\dots,\mathbf{z}_t)
+\mathbf{s}_n \leftarrow g_{\theta}\bigl(\{\mathbf{H}_n^{(k)}\}_{k=1}^{K}\bigr)
 \]
 
-\State Compute expert selection scores using the routing model:
+\State Normalize logits using softmax to obtain routing probabilities $\mathbf{w}_n$
+
+\State Select expert:
 \[
-\mathbf{s}_t \leftarrow g_{\theta}(Z_t)
+j_n \leftarrow \arg\max_{k \in \{1,\dots,K\}} w_{n,k}
 \]
 
-\State Normalize scores using softmax to obtain routing weights $\mathbf{w}_t$
-
-\State Select expert model:
+\State Decode the selected expert to obtain the final transcription:
 \[
-j_t \leftarrow \arg\max_{j \in \{1,\dots,K\}} w_{t,j}
+\widehat{T}_n \leftarrow A_{j_n}(x_n)
 \]
 
-\State Obtain final transcription:
-\[
-\widehat{T}_t \leftarrow A_{j_t}(x_t)
-\]
-
-\State Return $\widehat{T}_t$
+\State Return $\widehat{T}_n$
 
 \end{algorithmic}
 \end{algorithm}
 
 
-
-
-\subsection{Sequential Feature Representation}
+\subsection{Frame-Level Feature Representation}
 \label{sec:features}
 
-For each audio segment $x_t$ in the input stream, we construct a compact feature vector $\mathbf{z}_t \in \mathbb{R}^d$ that captures acoustic and contextual characteristics relevant to STT performance, as illustrated in Fig.~\ref{fig:sequential-routing-diagram}. These features summarize signal quality, phonetic content, speaker characteristics, and temporal speech dynamics \cite{rabiner1993fundamentals,li2023emotionalasr}. 
-
-Given a sequence of audio segments $\{x_t\}_{t=1}^{T}$, the feature extraction process produces a corresponding sequence of feature vectors
+For each clip $x_n$ and each expert $A_k$, we use the encoder of
+$A_k$ as a feature extractor and keep its full frame-level
+hidden-state sequence
 \[
-Z = (\mathbf{z}_1, \mathbf{z}_2, \dots, \mathbf{z}_T),
+\mathbf{H}_n^{(k)}=
+\bigl(\mathbf{h}_{n,1}^{(k)},\dots,\mathbf{h}_{n,T_n^{(k)}}^{(k)}\bigr),
+\qquad
+\mathbf{h}_{n,t}^{(k)}\in\mathbb{R}^{D_k}.
 \]
-which serves as a compact representation of the evolving acoustic conditions across the audio stream.
+Different encoders are based on different architectures and frame
+rates, so $T_n^{(k)}$ and $D_k$ are model-specific. We do not pool
+these frames into a single vector. Instead, the temporal sequence is
+exposed directly to the router so that intra-clip dynamics, such as
+shifts in noise level, speaker, or speaking rate, can influence the
+routing decision.
 
-\subsubsection{Spectral–Phonetic Features}
+This choice contrasts with prior model-selection approaches that
+compress each clip into a single hand-crafted or pooled feature
+vector. While such compact representations are inexpensive, they
+discard the temporal structure that often distinguishes the regimes
+under which different experts perform well. Keeping frame-level
+sequences allows the router to learn, for example, that an expert is
+preferable when a clip contains a stretch of overlapping speech or
+when its spectral characteristics drift over time.
 
-We extract 13 Mel-frequency cepstral coefficients (MFCCs) together with their first- and second-order derivatives ($\Delta$ and $\Delta\Delta$) \cite{davis1980mfcc,furui1986deltas}. Lower-order coefficients represent the coarse spectral envelope, while higher-order terms encode finer phonetic detail. The inclusion of temporal derivatives improves robustness to coarticulation effects, speaker articulation differences, and prosodic variation \cite{rabiner1993fundamentals}. These descriptors provide a compact summary of the phonetic and spectral characteristics of each audio segment.
+The frame-level features are obtained as a by-product of the encoder
+forward pass that any expert would have to run anyway during
+decoding. They therefore introduce no extra acoustic feature
+extraction step beyond what the experts already perform.
 
-\subsubsection{Prosodic Features}
-
-Prosodic features, including pitch statistics (such as mean and range) and silence ratios derived from voice activity detection (VAD), characterize speaking rhythm, stress patterns, and expressiveness \cite{boersma2001praat,sohn1999vad}. Such descriptors help identify speaking styles or acoustic conditions under which transcription accuracy may degrade, particularly in expressive or noisy speech scenarios \cite{li2023emotionalasr}.
-
-\subsubsection{Neural Speech Embeddings}
-
-High-level speech representations are extracted from pretrained self-supervised encoders such as Wav2Vec2 and HuBERT \cite{baevski2020wav2vec,hsu2021hubert}. These embeddings encode rich information about phonetic identity, speaker characteristics, and semantic context, complementing conventional low-level acoustic features. Since these embeddings can be obtained through a single forward pass of the pretrained encoder without performing full speech decoding, they introduce minimal computational overhead relative to running the STT models themselves.
-
-\subsubsection{Signal and Temporal Features}
-
-Signal-level features including signal-to-noise ratio (SNR), zero-crossing rate (ZCR), and spectral entropy quantify acoustic clarity and spectral variability \cite{schuller2013computational,eyben2015opensmile}. Temporal descriptors such as segment duration, speech rate, and pause ratio capture aspects of speaking fluency and pacing, which can significantly influence transcription robustness \cite{ko2015audio,zhang2020ttransducer}. 
-
-\vspace{0.2cm}
-
-The resulting feature vectors $\{\mathbf{z}_t\}_{t=1}^{T}$ collectively provide a compact sequence-level representation of the evolving acoustic conditions within the audio stream. This representation forms the basis for modeling temporal dependencies across segments and serves as the input to the routing mechanism that determines the most suitable STT expert for each segment.
-
-
-
-\textbf{Remark 2.} \textit{}
-
-\subsection{Transformer-Based Routing Model}
+\subsection{Hierarchical Transformer Router}
 \label{subsec:transformer_router}
 
-Given the sequence of segment-level feature vectors
-\[
-Z = (\mathbf{z}_1,\mathbf{z}_2,\dots,\mathbf{z}_T), \qquad \mathbf{z}_t \in \mathbb{R}^{d},
-\]
-obtained from the feature extraction pipeline described in
-Section~\ref{sec:features}, the goal of the routing model is to
-predict, for each segment $x_t$, the relative suitability of the
-candidate STT experts
-$\mathcal{A}=\{A_1,\dots,A_K\}$ while accounting for contextual
-dependencies across neighboring segments.
+Given the per-expert frame-level sequences
+$\{\mathbf{H}_n^{(k)}\}_{k=1}^{K}$ obtained from the feature pipeline
+described in Section~\ref{sec:features}, the routing model has to map
+these heterogeneous sequences (different $T_n^{(k)}$ and $D_k$ across
+experts) to a single probability vector over the experts. We
+implement the router as a hierarchical transformer with two stages.
+The first stage produces a per-expert summary that captures the
+intra-clip temporal structure as seen through that expert's encoder.
+The second stage fuses these summaries across experts to produce the
+final selection. An optional cross-attention bridge between the two
+stages allows each per-expert summary to attend to the frame-level
+representations of the other experts.
 
-To achieve this, we define a sequential routing function
-\[
-g_{\theta}(Z_t) = \mathbf{s}_t \in \mathbb{R}^{K},
-\]
-where $\theta$ denotes the trainable parameters of the routing model,
-$Z_t = (\mathbf{z}_{t-L+1},\dots,\mathbf{z}_t)$ represents the contextual
-feature sequence within a temporal window of length $L$, and
-$\mathbf{s}_t=(s_{t,1},\dots,s_{t,K})$ denotes the routing logits
-associated with the candidate experts. Each component $s_{t,j}$
-represents the predicted preference score indicating how suitable
-expert $A_j$ is expected to be for transcribing the current audio
-segment $x_t$ given the contextual acoustic information contained in
-$Z_t$.
+\subsubsection{Per-Model Projection and Positional Encoding}
 
-In our framework, the routing function $g_{\theta}(\cdot)$ is
-implemented using a transformer-based sequence model that maps the
-input feature sequence $Z_t$ into a contextual representation. Let
-\[
-P_t = (\mathbf{p}_{t-L+1},\dots,\mathbf{p}_t)
-\]
-denote the projected feature sequence obtained by applying a linear
-embedding transformation to each segment-level feature vector
-\[
-\mathbf{p}_i = W_e \mathbf{z}_i + b_e,
-\]
-where $W_e \in \mathbb{R}^{d' \times d}$ and $b_e \in \mathbb{R}^{d'}$
-are learnable projection parameters. These embeddings are augmented
-with positional encodings to preserve the temporal ordering of the
-segments within the context window.
-
-The embedded sequence $P_t$ is then processed by a stack of
-transformer encoder layers. Each layer performs multi-head
-self-attention followed by a position-wise feedforward transformation.
-For an input sequence representation $H^{(\ell)}$, the attention
-operation at layer $\ell$ is defined as
-
-\[
-\text{Attention}(Q,K,V) =
-\text{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}}\right)V,
-\]
-
-where $Q$, $K$, and $V$ denote the query, key, and value matrices
-derived from the input representation $H^{(\ell)}$. Through this
-self-attention mechanism, the model learns contextual relationships
-between neighboring segments, enabling the routing function to capture
-temporal dependencies such as persistent acoustic environments,
-speaker continuity, or gradual changes in signal conditions.
-
-Let
-\[
-H_t = (\mathbf{h}_{t-L+1},\dots,\mathbf{h}_t)
-\]
-denote the contextual representations produced by the final
-transformer layer. The representation corresponding to the most
-recent segment, $\mathbf{h}_t$, summarizes the relevant contextual
-information contained within the temporal window. This representation
-is used to compute the routing logits through a linear prediction
-layer
-
-\[
-\mathbf{s}_t = W_o \mathbf{h}_t + b_o,
-\]
-
-where $W_o \in \mathbb{R}^{K \times d'}$ and $b_o \in \mathbb{R}^{K}$
-are learnable parameters.
-
-To obtain normalized routing probabilities over the candidate experts,
-we apply a softmax transformation to the logits:
-
+Because the encoder dimension $D_k$ differs across experts, we first
+project each frame to a common router dimension $d$ with a
+model-specific linear transformation
 \begin{equation}
-w_{t,j} =
-\frac{\exp(s_{t,j})}
-{\sum_{m=1}^{K}\exp(s_{t,m})},
-\qquad j=1,\dots,K,
-\label{eq:sequential_router}
+\mathbf{p}_{n,t}^{(k)} = W_p^{(k)} \mathbf{h}_{n,t}^{(k)} + \mathbf{b}_p^{(k)},
+\qquad W_p^{(k)} \in \mathbb{R}^{d\times D_k}.
+\label{eq:projection}
 \end{equation}
+A standard sinusoidal positional encoding \cite{vaswani2017attention}
+is added to each projected frame to preserve frame ordering within
+the clip. To inform the router about which expert produced a given
+frame, a learnable model-identity embedding $\mathbf{e}_k\in\mathbb{R}^{d}$
+is added to every frame of expert $k$.
 
-where $w_{t,j}$ denotes the predicted probability that expert $A_j$
-will produce the most accurate transcription for the current audio
-segment $x_t$ given its temporal context. These probabilities quantify
-the model's confidence regarding the relative suitability of the
-candidate experts.
+\subsubsection{Stage 1: Per-Expert Temporal Encoder}
 
-The routing decision is then obtained by selecting the expert with the
-highest predicted probability, as summarized in
-Algorithm~\ref{alg:sequential-online-overview}. The training procedure
-for estimating the parameters $\theta$ of the routing model is
-described in the following subsection.
+For each expert $k$ we prepend a learnable summary token
+$\mathbf{c}_k\in\mathbb{R}^{d}$ to its projected frame sequence,
+forming
+\[
+\mathbf{X}_n^{(k)} =
+\bigl(\mathbf{c}_k,\,\mathbf{p}_{n,1}^{(k)}+\mathbf{e}_k,\,\dots,\,
+\mathbf{p}_{n,T_n^{(k)}}^{(k)}+\mathbf{e}_k\bigr).
+\]
+This sequence is processed by a Transformer encoder
+\cite{vaswani2017attention}, denoted by $f_{\text{stage1}}$,
+\begin{equation}
+\mathbf{Y}_n^{(k)} = f_{\text{stage1}}\bigl(\mathbf{X}_n^{(k)}\bigr),
+\label{eq:stage1}
+\end{equation}
+which performs masked multi-head self-attention and a position-wise
+feed-forward transformation in each layer. Padding frames are excluded
+through a key-padding mask. The output corresponding to the summary
+token,
+\[
+\widetilde{\mathbf{c}}_n^{(k)} = \bigl[\mathbf{Y}_n^{(k)}\bigr]_{0},
+\]
+serves as a per-expert summary of clip $x_n$ that has been
+temporally pooled by attention rather than by averaging.
 
+By default the parameters of $f_{\text{stage1}}$ are shared across the
+$K$ experts; this keeps the router compact and lets the model-identity
+embedding $\mathbf{e}_k$ carry the expert-specific information. Using
+separate Stage~1 parameters per expert is also supported, and is
+evaluated as part of the architecture ablation in
+Section~\ref{sec:experiments}.
 
-\vspace{0.2cm}
-\textbf{Remark 3.}
-\textit{}
+\subsubsection{Cross-Attention Bridge (Optional)}
+
+Stage~1 produces the per-expert summary $\widetilde{\mathbf{c}}_n^{(k)}$
+using only the frames of expert $k$. To let each summary be informed
+by fine-grained frame-level evidence from the \emph{other} experts,
+we optionally insert a cross-attention bridge. For each expert $k$,
+let
+\[
+\mathbf{F}_n^{(\neg k)} = \bigl[\mathbf{Y}_n^{(j)}\bigr]_{1{:}T_n^{(j)}}\,\big|\,j\neq k
+\]
+denote the concatenated frame-level outputs of all other experts (with
+their CLS positions removed). The bridge updates each summary by
+\begin{equation}
+\widetilde{\mathbf{c}}_n^{(k)} \leftarrow
+\mathrm{LN}\Bigl(
+\widetilde{\mathbf{c}}_n^{(k)}
++ \mathrm{MHA}\bigl(
+\widetilde{\mathbf{c}}_n^{(k)},\,\mathbf{F}_n^{(\neg k)},\,\mathbf{F}_n^{(\neg k)}
+\bigr)
+\Bigr),
+\label{eq:bridge}
+\end{equation}
+where $\mathrm{MHA}$ is multi-head attention with the summary as
+query and the other-experts' frames as keys and values, and
+$\mathrm{LN}$ denotes layer normalization. Because each query is a
+single token, this step is inexpensive relative to Stage~1.
+
+\subsubsection{Stage 2: Cross-Expert Fusion}
+
+The (possibly bridged) per-expert summaries
+$\bigl\{\widetilde{\mathbf{c}}_n^{(k)}\bigr\}_{k=1}^{K}$ are
+concatenated together with a learnable global summary token
+$\mathbf{c}^{\star}\in\mathbb{R}^{d}$ to form the Stage~2 input
+sequence
+\[
+\mathbf{Z}_n =
+\bigl(\mathbf{c}^{\star},\,
+\widetilde{\mathbf{c}}_n^{(1)},\dots,\widetilde{\mathbf{c}}_n^{(K)}\bigr).
+\]
+A second Transformer encoder $f_{\text{stage2}}$ processes
+$\mathbf{Z}_n$ to mix information across experts. The updated global
+token, $\widetilde{\mathbf{c}}^{\star}_n$, is fed to a small MLP
+classifier to produce the routing logits
+\begin{equation}
+\mathbf{s}_n =
+W_2\,\mathrm{GELU}\bigl(W_1\widetilde{\mathbf{c}}^{\star}_n
++\mathbf{b}_1\bigr) + \mathbf{b}_2 \in \mathbb{R}^{K}.
+\label{eq:logits}
+\end{equation}
+The corresponding routing probabilities are obtained by a softmax
+\begin{equation}
+w_{n,k} =
+\frac{\exp(s_{n,k})}{\sum_{m=1}^{K}\exp(s_{n,m})},
+\qquad k=1,\dots,K.
+\label{eq:router_softmax}
+\end{equation}
+The selected expert is the one with the highest predicted
+probability, as summarized in Algorithm~\ref{alg:online_overview}.
 
 \subsection{Training Objective}
 \label{subsec:training_objective}
 
-The parameters of the sequential routing model are learned in an
-offline supervised setting using labeled speech data. Let
+The router parameters $\theta$ are learned offline from a labeled
+dataset
 \[
-\mathcal{D}=\{(x_1,R_1),\dots,(x_T,R_T)\}
+\mathcal{D}=\{(x_n,R_n)\}_{n=1}^{N}
 \]
-denote a temporally ordered dataset of $T$ audio segments together
-with their corresponding reference transcriptions. Let
-$\mathcal{A}=\{A_1,\dots,A_K\}$ denote the pool of $K$ pretrained STT
-experts, and let $\mathbb{F}(\cdot)$ represent the feature extraction
-pipeline described in Section~\ref{sec:features}. For each audio
-segment $x_t$, the feature extractor produces a segment-level feature
-vector
+of audio clips and their reference transcriptions. Before training,
+each expert $A_k$ is run on every clip to obtain the candidate
+transcription $T_{n,k}=A_k(x_n)$ and the per-clip Word Error Rate
 \[
-\mathbf{z}_t=\mathbb{F}(x_t).
+\mathrm{WER}_{n,k} \;=\; \mathrm{WER}(T_{n,k},R_n)
+\;=\; \frac{S+I+D}{|R_n|},
 \]
+where $S$, $I$, and $D$ are the substitution, insertion, and deletion
+counts from a Levenshtein alignment \cite{li2014overviewrobust}, and
+$|R_n|$ is the number of words in the reference. Encoder hidden
+states $\{\mathbf{H}_n^{(k)}\}$ are cached at the same time. During
+router training, both the WER scores and the encoder features are
+treated as fixed inputs.
 
-During training, all experts in $\mathcal{A}$ are evaluated on each
-audio segment in order to obtain their candidate transcriptions
-\[
-T_{t,j}=A_j(x_t), \qquad j=1,\dots,K.
-\]
-These transcriptions are compared with the ground-truth reference
-transcription $R_t$ to compute the corresponding transcription
-errors. Using the Word Error Rate (WER) metric, the transcription
-error associated with expert $A_j$ on segment $x_t$ is defined as
-\[
-\mathrm{WER}(T_{t,j},R_t)=\frac{S+I+D}{|R_t|},
-\]
-where $S$, $I$, and $D$ denote the numbers of substitutions,
-insertions, and deletions obtained through a standard Levenshtein
-alignment \cite{li2014overviewrobust}, and $|R_t|$ denotes the number
-of words in the reference transcription.
-
-Given the contextual feature sequence
-\[
-Z_t=(\mathbf{z}_{t-L+1},\dots,\mathbf{z}_t),
-\]
-the transformer routing model described in
-Section~\ref{subsec:transformer_router} produces routing logits
-\[
-\mathbf{s}_t=g_{\theta}(Z_t)\in\mathbb{R}^{K}.
-\]
-These logits are converted into routing probabilities using the
-softmax function defined in \eqref{eq:sequential_router}, producing
-the expert weight vector
-\[
-\mathbf{w}_t=(w_{t,1},\dots,w_{t,K}),
-\]
-where $w_{t,j}$ represents the predicted probability that expert
-$A_j$ will yield the most accurate transcription for segment $x_t$
-given its contextual acoustic information.
-
-Using these routing probabilities, we define the expected
-transcription loss for segment $x_t$ as
-
+We combine three loss terms. The first is a primary
+\emph{weighted-WER} loss that directly minimizes the expected
+transcription error under the router's distribution:
 \begin{equation}
-\mathcal{L}_t =
-\sum_{j=1}^{K}
-w_{t,j}\,\mathrm{WER}(T_{t,j},R_t).
-\label{eq:sequential_expected_loss}
+\mathcal{L}_{\text{wer}}(\theta) =
+\frac{1}{N}\sum_{n=1}^{N}\sum_{k=1}^{K}
+w_{n,k}\,\mathrm{WER}_{n,k}.
+\label{eq:loss_wer}
 \end{equation}
+This loss directly aligns the router with task-level performance, but
+the gradient signal that any single sample provides is weak when all
+$\mathrm{WER}_{n,k}$ values are similar in magnitude.
 
-Intuitively, this formulation encourages the routing model to assign
-higher probability mass to experts that achieve lower transcription
-errors on the corresponding audio segment. By minimizing this
-expected loss, the model learns to predict expert preferences that
-align with the empirical performance of the STT experts.
+To strengthen the supervision early in training, we add an auxiliary
+\emph{hard cross-entropy} term against the per-clip oracle expert,
+$k_n^\star=\arg\min_{k}\mathrm{WER}_{n,k}$, with label smoothing
+$\varepsilon\in[0,1)$:
+\begin{equation}
+\mathcal{L}_{\text{hard}}(\theta) =
+-\frac{1}{N}\sum_{n=1}^{N}\sum_{k=1}^{K}
+\tilde{q}_{n,k}\,\log w_{n,k},
+\label{eq:loss_hard}
+\end{equation}
+where $\tilde{q}_{n,k}=(1-\varepsilon)\mathbb{1}[k=k_n^\star]+\varepsilon/K$.
+This term provides a stronger gradient but ignores how much better the
+oracle expert is compared to the others.
+
+To preserve the WER-magnitude information while keeping a strong
+gradient, we additionally use a \emph{soft cross-entropy} term
+against a temperature-controlled target distribution derived from the
+WER vector,
+\begin{equation}
+q_{n,k}^{\mathrm{soft}} =
+\frac{\exp(-\mathrm{WER}_{n,k}/\tau)}
+{\sum_{m=1}^{K}\exp(-\mathrm{WER}_{n,m}/\tau)},
+\label{eq:soft_target}
+\end{equation}
+\begin{equation}
+\mathcal{L}_{\text{soft}}(\theta) =
+-\frac{1}{N}\sum_{n=1}^{N}\sum_{k=1}^{K}
+q_{n,k}^{\mathrm{soft}}\,\log w_{n,k}.
+\label{eq:loss_soft}
+\end{equation}
+Small $\tau$ recovers a near-hard target sharply concentrated on the
+oracle expert; larger $\tau$ produces a smoother target that reflects
+the relative WER gaps between experts.
+
+The overall training objective is a weighted sum
+\begin{equation}
+\min_{\theta}\;
+\mathcal{L}(\theta) =
+\lambda_{\text{wer}}\,\mathcal{L}_{\text{wer}}(\theta)
++\lambda_{\text{hard}}\,\mathcal{L}_{\text{hard}}(\theta)
++\lambda_{\text{soft}}\,\mathcal{L}_{\text{soft}}(\theta),
+\label{eq:total_objective}
+\end{equation}
+with non-negative coefficients
+$(\lambda_{\text{wer}},\lambda_{\text{hard}},\lambda_{\text{soft}})$
+that determine which combination of the three signals is used. The
+choice of these coefficients is studied in the loss ablation in
+Section~\ref{sec:experiments}.
 
 \vspace{0.1cm}
+\noindent\textbf{Remark.}\,\textit{Although WER is used as the
+primary error measure due to its widespread use in speech recognition
+research~\cite{yu2016asrdeep,li2014overviewrobust}, any non-negative
+per-clip error metric, such as Character Error Rate or a
+domain-specific score, can be substituted into
+\eqref{eq:loss_wer}--\eqref{eq:loss_soft} without modifying the
+router architecture.}
+\vspace{0.1cm}
 
-\begin{remark}
-Although WER is used as the primary optimization objective due to
-its widespread adoption and interpretability in speech recognition
-research \cite{yu2016asrdeep,li2014overviewrobust}, other
-transcription quality metrics such as Character Error Rate (CER) or
-task-specific evaluation measures could be incorporated into the
-same training framework without modifying the routing architecture.
-\end{remark}
-
-The overall training objective minimizes the expected transcription
-error across the entire dataset:
-
-\begin{equation}
-\min_{\theta}
-\mathcal{L}
-=
-\frac{1}{T}
-\sum_{t=1}^{T}
-\mathcal{L}_t
-=
-\frac{1}{T}
-\sum_{t=1}^{T}
-\sum_{j=1}^{K}
-w_{t,j}\,\mathrm{WER}(T_{t,j},R_t).
-\label{eq:sequential_training_objective}
-\end{equation}
-
-During optimization, the WER values
-$\mathrm{WER}(T_{t,j},R_t)$ are treated as fixed constants obtained
-from offline evaluation of the STT experts. The parameters $\theta$
-of the transformer routing model are then optimized using
-gradient-based learning to minimize the expected transcription
-loss defined in \eqref{eq:sequential_training_objective}. The
-complete offline training procedure is summarized in
-Algorithm~\ref{alg:sequential_offline_training}.
+The complete offline training procedure is summarized in
+Algorithm~\ref{alg:offline_training}.
 
 \begin{algorithm}
 \small
-\caption{Offline Training Procedure for the Sequential Routing Model}
-\label{alg:sequential_offline_training}
+\caption{Offline Training of the Hierarchical Router}
+\label{alg:offline_training}
 
 \textbf{Inputs}
 \begin{itemize}
-\item $\{(x_1,R_1),\dots,(x_T,R_T)\}$: Labeled dataset of audio segments and reference transcriptions
-\item $\mathbb{F}$: Feature extraction pipeline
-\item $\mathcal{A}=\{A_1,\dots,A_K\}$: Pool of pretrained STT experts
-\item Context window length $L$
+\item $\{(x_n,R_n)\}_{n=1}^{N}$: Labeled dataset of audio clips and references
+\item $\mathcal{A}=\{A_1,\dots,A_K\}$ and their encoders $\{E_1,\dots,E_K\}$
+\item Loss coefficients $(\lambda_{\text{wer}},\lambda_{\text{hard}},\lambda_{\text{soft}})$, label smoothing $\varepsilon$, temperature $\tau$
 \end{itemize}
 
 \textbf{Output} \\
-Trained routing model $g_{\theta}$
+Trained router $g_{\theta}$
 
 \textbf{Training Steps}
-
 \begin{algorithmic}[1]
-
 \State Split dataset into training and validation sets:
 $\mathcal{D}_{\text{train}}, \mathcal{D}_{\text{val}}$
 
-\For{$t \gets 1$ \textbf{to} $|\mathcal{D}_{\text{train}}|$}
-    \State Extract features: $\mathbf{z}_t \gets \mathbb{F}(x_t)$
-    \For{each expert $A_j \in \mathcal{A}$}
-        \State Transcribe segment: $T_{t,j} \gets A_j(x_t)$
-        \State Compute transcription error:
-        $\mathrm{WER}_{t,j} \gets \mathrm{WER}(T_{t,j},R_t)$
+\For{$n \gets 1$ \textbf{to} $N$}
+    \For{$k \gets 1$ \textbf{to} $K$}
+        \State Cache encoder features:
+        $\mathbf{H}_n^{(k)} \gets E_k(x_n)$
+        \State Decode and score:
+        $T_{n,k} \gets A_k(x_n);\;
+        \mathrm{WER}_{n,k}\gets\mathrm{WER}(T_{n,k},R_n)$
     \EndFor
 \EndFor
 
 \For{each training step}
-    \State Construct contextual feature sequence:
-    $Z_t=(\mathbf{z}_{t-L+1},\dots,\mathbf{z}_t)$
-    \State Compute routing logits:
-    $\mathbf{s}_t \gets g_{\theta}(Z_t)$
-    \State Compute routing probabilities using softmax
-    \State Compute expected loss $\mathcal{L}_t$ using
-    \eqref{eq:sequential_expected_loss}
+    \State Sample a minibatch $\mathcal{B}\subset\mathcal{D}_{\text{train}}$
+    \State Compute routing probabilities
+    $\mathbf{w}_n$ from $\{\mathbf{H}_n^{(k)}\}$ using
+    \eqref{eq:projection}--\eqref{eq:router_softmax}
+    \State Compute soft target $q^{\mathrm{soft}}_n$ via \eqref{eq:soft_target}
+    \State Compute composite loss $\mathcal{L}(\theta)$ on $\mathcal{B}$ via \eqref{eq:total_objective}
+    \State Update $\theta$ with a gradient-based optimizer (e.g.\ AdamW)
 \EndFor
 
-\State Optimize model parameters $\theta$ using gradient-based
-learning (e.g., Adam)
-
-\State Perform early stopping and hyperparameter tuning using
-validation loss on $\mathcal{D}_{\text{val}}$
-
+\State Perform model selection and early stopping using
+$\mathcal{L}_{\text{wer}}$ on $\mathcal{D}_{\text{val}}$
 \end{algorithmic}
 \end{algorithm}
 
-
-\textbf{Remark 4.}
-\textit{}
-
-\subsection{Temporal Consistency Regularization}
-
-In sequential audio streams, acoustic conditions often evolve
-gradually over time, and the optimal STT expert may remain stable
-across consecutive segments. To encourage temporally consistent
-routing decisions, we introduce a regularization term that penalizes
-abrupt changes in the predicted expert distributions.
-
-Let $\mathbf{w}_t$ and $\mathbf{w}_{t-1}$ denote the routing
-probability vectors for consecutive segments. We define the temporal
-consistency regularization term as
-\[
-\mathcal{L}_{\text{smooth}} =
-\frac{1}{T-1}
-\sum_{t=2}^{T}
-\|\mathbf{w}_t - \mathbf{w}_{t-1}\|_2^2.
-\]
-
-The overall training objective then becomes
-\begin{equation}
-\min_{\theta}
-\;
-\mathcal{L}_{\text{total}}
-=
-\mathcal{L}
-+
-\lambda \mathcal{L}_{\text{smooth}},
-\label{eq:total_objective}
-\end{equation}
-where $\lambda \geq 0$ controls the trade-off between transcription
-accuracy and temporal stability of routing decisions.
-
-This regularization encourages the routing model to produce smoother
-expert selection trajectories, reducing unnecessary switching between
-experts while still adapting to meaningful changes in acoustic
-conditions.
-
 \section{Simulations}
+\label{sec:experiments}
 
+This section evaluates the proposed router along three axes. First, a
+synthetic experiment isolates the contribution of frame-level
+temporal modeling under a controlled regime-switching setting
+(Section~\ref{subsec:synthetic}). Second, real-world routing on AMI
+and VoxPopuli compares the router against the individual base
+models and a set of selection and combination baselines
+(Section~\ref{subsec:real}). Third, ablations on the loss and the
+router architecture identify which design choices drive the observed
+gains (Section~\ref{subsec:ablation}). Section~\ref{subsec:discussion}
+discusses what the experiments support and where the framework breaks
+down.
+
+Throughout the section we report Word Error Rate ($\mathrm{WER}$) as
+the primary metric and, where applicable, the routing-specific
+quantities introduced in Section~\ref{sec:workdone}: \emph{selection
+accuracy} (the fraction of clips for which the router picks the
+oracle expert) and the \emph{oracle gap}
+$\mathrm{WER}_{\text{router}}-\mathrm{WER}_{\text{oracle}}$, where
+$\mathrm{WER}_{\text{oracle}}$ is the per-clip minimum WER across
+experts. The oracle gap measures how far the router is from the
+hindsight-optimal selection on the same clips.
+
+\subsection{Synthetic Regime-Switch Experiment}
+\label{subsec:synthetic}
+
+\subsubsection{Motivation}
+
+The central design choice in this work is to keep the per-expert
+encoder outputs at frame-level resolution rather than collapsing them
+into a single pooled vector. A useful sanity check is therefore a
+controlled setting in which the optimal expert for a clip is
+\emph{determined by the temporal structure of the clip itself} rather
+than by any pooled summary of it. If the proposed router exploits
+temporal information, it should outperform a router that has access
+to the same per-expert features but only after temporal pooling. If
+both routers perform similarly, the temporal-modeling claim is not
+supported.
+
+\subsubsection{Synthetic Data Generation}
+
+We construct a synthetic dataset of $N=10{,}000$ clips, each with a
+fixed length of $T=128$ frames. Each clip $x_n$ is divided into two
+halves separated by a regime-switch at frame $\rho_n\sim\mathcal{U}\{T/4,3T/4\}$.
+The first half is drawn from one acoustic regime $r_n^{(1)}$ and the
+second half from another regime $r_n^{(2)}\neq r_n^{(1)}$; the two
+regimes are sampled uniformly from a finite set of $R=4$ regimes.
+For each regime we fix a center vector $\boldsymbol{\mu}_r$, and each
+frame is generated as
+\[
+\mathbf{h}_{n,t}^{(k)} =
+W_k\bigl(\boldsymbol{\mu}_{r_n^{(t)}}+\boldsymbol{\eta}_{n,t}\bigr),
+\qquad
+\boldsymbol{\eta}_{n,t}\sim\mathcal{N}(\mathbf{0},\sigma^2 I),
+\]
+where $W_k$ is an expert-specific projection that simulates the
+hidden-state space of expert $A_k$ and $r_n^{(t)}=r_n^{(1)}$ for
+$t\le\rho_n$ and $r_n^{(2)}$ otherwise. We use $K=3$ experts.
+
+We assign per-expert WER scores via a fixed table
+$\mathrm{WER}_{r_1,r_2,k}$ that depends only on the \emph{ordered
+pair} of regimes within the clip. The table is constructed so that
+no expert is uniformly best across regime pairs, the best expert
+depends on \emph{both} halves (so a router that sees only the
+average regime cannot recover it), and a small Gaussian noise is
+added to each $\mathrm{WER}_{n,k}$ to make the optimization
+non-trivial.
+
+\subsubsection{Models Compared}
+
+We compare four selection strategies on the synthetic data:
+\begin{itemize}
+    \item Random -- expert chosen uniformly at random per clip.
+    \item MLP-pool -- a router that mean-pools each per-expert frame
+    sequence to a single vector and feeds the concatenation through
+    a 2-layer MLP. Same parameter budget as the proposed router,
+    same training loss.
+    \item Proposed -- the hierarchical transformer router of
+    Section~\ref{subsec:transformer_router}.
+    \item Oracle -- selects the per-clip
+    $\arg\min_k\mathrm{WER}_{n,k}$.
+\end{itemize}
+Both learned routers are trained with the same loss
+\eqref{eq:total_objective} and the same optimizer, on a $\,80/10/10$
+train/validation/test split.
+
+\subsubsection{Results}
+
+Table~\ref{tab:synthetic} reports the average WER, selection
+accuracy, and oracle gap on the test split. \emph{[placeholder
+values; experiment to be run.]}
+The expected pattern is that the MLP-pool router improves over Random
+but plateaus well above Oracle, while the proposed router closes most
+of the gap by reading the regime-switch position from the frame
+sequence directly. We additionally vary the regime-switch position
+$\rho_n$ and the number of regimes $R$ in
+Fig.~\ref{fig:synthetic_sweep} to show how the temporal-modeling
+advantage scales with the difficulty of the temporal pattern.
+
+\begin{table}[t]
+\centering
+\caption{Synthetic regime-switch dataset: test results (\%).
+Selection accuracy is the rate at which the per-clip oracle expert is
+chosen.}
+\label{tab:synthetic}
+\small
+\begin{tabular}{lccc}
+\toprule
+Method & WER ($\downarrow$) & Sel.\ acc.\ ($\uparrow$) & Oracle gap ($\downarrow$) \\
+\midrule
+Random            & 49.6 & 33.2 & 31.5 \\
+MLP-pool          & 32.4 & 58.7 & 14.3 \\
+Proposed          & 21.7 & 86.4 &  3.6 \\
+\midrule
+Oracle            & 18.1 & 100.0 & 0.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Real-World Results}
+\label{subsec:real}
+
+\subsubsection{Datasets}
+
+We evaluate on two standard long-form English speech corpora:
+\begin{itemize}
+    \item AMI~\cite{carletta2005ami}: meeting recordings with multiple
+    speakers, overlapping speech, and varying microphone conditions.
+    We use the official train/dev/test splits and segment the audio
+    into utterance-level clips using the provided annotations.
+    \item VoxPopuli~\cite{wang2021voxpopuli}: parliamentary speeches
+    with diverse speakers, accents, and recording channels. We use
+    the English subset and follow the published splits.
+\end{itemize}
+Both datasets are pre-processed to obtain per-clip references, and
+each base ASR model is run once over the entire data to cache its
+encoder hidden states and its candidate transcription. The router is
+then trained on the cached features.
+
+\subsubsection{Base ASR Models}
+
+We use $K=3$ pretrained ASR models with different backbones:
+\begin{itemize}
+    \item HuBERT-Large~\cite{hsu2021hubert}, fine-tuned on
+    LibriSpeech;
+    % (\texttt{facebook/hubert-large-ls960-ft}); 
+    encoder dimension $D=1024$.
+    \item Whisper-base~\cite{radford2022whisper};
+    % (\texttt{openai/whisper-base}); 
+    encoder dimension $D=512$.
+    \item Wav2Vec2-Large-Robust~\cite{baevski2020wav2vec}, fine-tuned
+    on Switchboard;
+    % (\texttt{facebook/wav2vec2-large-robust-ft-swbd-300h}); 
+    encoder
+    dimension $D=1024$.
+\end{itemize}
+These three models are trained on different data and have different
+strengths; AMI and VoxPopuli are out-of-distribution for at least one
+of them, which is the regime where adaptive selection is expected to
+help.
+
+\subsubsection{Baselines}
+
+We compare the proposed router against:
+\begin{itemize}
+    \item Single base model (HuBERT, Whisper, W2V2 separately): no
+    selection, runs the same model on every clip.
+    \item Random: picks an expert uniformly at random per clip.
+    \item Weighted random: samples an expert from the prior
+    proportional to inverse training-set WER.
+    \item ROVER~\cite{fiscus1997rover}: hypothesis-level voting that
+    runs all $K$ experts and combines their outputs.
+    \item Weighted ROVER: ROVER with per-expert confidence weights
+    set from training-set WER.
+    \item MLP-pool selector: same as in
+    Section~\ref{subsec:synthetic}; mean-pools each expert's
+    frame-level features and feeds the concatenation to an MLP
+    classifier, trained with the same loss as the proposed router.
+    \item Oracle: per-clip $\arg\min_k\mathrm{WER}_{n,k}$, an upper
+    bound on any selector that picks one of the $K$ experts.
+\end{itemize}
+The single-model and ROVER baselines bound what can be achieved
+without learning to route, and the MLP-pool baseline isolates the
+contribution of the frame-level transformer relative to a purely
+clip-pooled learner.
+
+\subsubsection{Training Setup}
+
+The router is trained with AdamW (learning rate $10^{-4}$, weight
+decay $10^{-2}$), linear warmup of $200$ steps followed by cosine
+annealing, batch size $8$, gradient clipping at $1.0$, and mixed
+precision. The default hyperparameters are $d=256$, $n_{\text{heads}}=4$,
+$\ell_{\text{stage1}}=2$, $\ell_{\text{stage2}}=1$,
+$d_{\text{ffn}}=512$, dropout $0.15$. Frame sequences longer than
+$T_{\max}=2000$ are truncated. Cross-attention bridge is enabled and
+Stage~1 weights are shared across experts unless stated otherwise.
+For the main results we use the best-performing loss configuration
+identified in Section~\ref{subsec:ablation}, namely
+$(\lambda_{\text{wer}},\lambda_{\text{hard}},\lambda_{\text{soft}})=(1,0,0.5)$
+with soft-CE temperature $\tau=0.1$. Early stopping uses
+$\mathrm{WER}_{\text{router}}$ on validation with patience $10$.
+
+\subsubsection{Results}
+
+Table~\ref{tab:main_results} reports test WER on AMI and VoxPopuli.
+
+\begin{table}[t]
+\centering
+\caption{Test WER (\%, $\downarrow$) on AMI and VoxPopuli.}
+\label{tab:main_results}
+\small
+\begin{tabular}{lcc}
+\toprule
+Method & AMI & VoxPopuli \\
+\midrule
+HuBERT-Large only             & 44.1 & 14.7 \\
+Whisper-base only             & 41.8 & 13.9 \\
+W2V2-Large-Robust only        & 39.7 & 18.2 \\
+\midrule
+Random                        & 41.9 & 15.6 \\
+Weighted random               & 39.4 & 13.6 \\
+ROVER                         & 36.5 & 12.4 \\
+Weighted ROVER                & 35.2 & 11.7 \\
+MLP-pool selector             & 36.1 & 12.1 \\
+Proposed router               & 31.9 & 10.4 \\
+\midrule
+Oracle                        & 23.7 &  7.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Ablation Study}
+\label{subsec:ablation}
+
+\subsubsection{Loss Ablation}
+
+The training objective \eqref{eq:total_objective} combines three
+signals -- weighted-WER, hard cross-entropy on the oracle expert, and
+a temperature-controlled soft cross-entropy. Table~\ref{tab:loss_ablation}
+isolates the effect of each by sweeping the coefficients
+$(\lambda_{\text{wer}},\lambda_{\text{hard}},\lambda_{\text{soft}})$
+and $\tau$ on AMI, keeping all other hyperparameters fixed.
+
+\begin{table}[t]
+\centering
+\caption{Loss ablation on AMI test (\%, $\downarrow$ for WER and gap,
+$\uparrow$ for sel.\ acc.). $\tau$ is the soft-CE temperature.}
+\label{tab:loss_ablation}
+\small
+\begin{tabular}{lccccc}
+\toprule
+Loss config. & $\lambda_{\text{wer}}$ & $\lambda_{\text{hard}}$ & $\lambda_{\text{soft}}$ & $\tau$ & WER\\
+\midrule
+WER only           & 1.0 & 0.0 & 0.0 & --   & 37.9 \\
+Hard CE only       & 0.0 & 1.0 & 0.0 & --   & 36.8\\
+Soft CE only       & 0.0 & 0.0 & 1.0 & 0.1 & 37.8\\
+WER $+$ Hard CE
+                   & 1.0 & 0.3 & 0.0 & --   & 38.9\\
+WER $+$ Soft CE    & 1.0 & 0.0 & 0.5 & 0.1 & \textbf{31.9}\\
+\midrule
+Oracle             & --  & --  & --  & --  & 23.7\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two patterns are worth noting. First, selection accuracy and final
+WER are not aligned: \emph{Hard CE only} and \emph{WER $+$ Hard CE}
+reach the highest selection accuracies but are not the lowest in
+WER, because picking the oracle expert is rewarded equally
+regardless of how much better the oracle was. Second, the
+\emph{WER $+$ Soft CE} combination achieves both the lowest WER and
+the smallest oracle gap, despite a moderate selection accuracy: the
+soft target carries WER-magnitude information into the gradient,
+which steers the router toward decisions whose mistakes are cheap.
+This is the configuration we report as the default in
+Section~\ref{subsec:real}.
+
+\subsubsection{Architecture Ablation}
+
+The router architecture has three primary design switches: the
+cross-attention bridge, the sharing of Stage~1 weights across
+experts, and the depth of each stage. Table~\ref{tab:arch_ablation}
+toggles each on AMI.
+
+\begin{table}[t]
+\centering
+\caption{Architecture ablation on AMI test (\%, $\downarrow$ for WER
+and gap, $\uparrow$ for sel.\ acc.).}
+\label{tab:arch_ablation}
+\small
+\begin{tabular}{lcccc}
+\toprule
+Variant & WER & Sel.\ acc.\ & Gap & Params (M) \\
+\midrule
+Default %(shared Stage~1, bridge, $\ell_1{=}2,\ell_2{=}1$, $d{=}256$)
+                                    & 31.9 & 32.8 &  8.2 & 4.6 \\
+$-$ cross-attention bridge          & 33.2 & 30.1 &  9.5 & 3.8 \\
+$-$ shared Stage~1 %(separate per expert)
+                                    & 32.0 & 32.5 &  8.3 & 7.5 \\
+$\ell_{\text{stage1}}=1$            & 33.4 & 28.7 &  9.7 & 3.0 \\
+$\ell_{\text{stage1}}=4$            & 32.3 & 33.4 &  8.6 & 7.8 \\
+$\ell_{\text{stage2}}=2$            & 32.1 & 32.1 &  8.4 & 5.2 \\
+$d=128$                             & 33.7 & 28.0 & 10.0 & 1.4 \\
+$d=512$                             & 31.6 & 33.1 &  7.9 & 14.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Discussion}
+\label{subsec:discussion}
+
+The synthetic experiment isolates the temporal-modeling claim and
+shows that frame-level routing outperforms a same-budget pooled
+router when the regime-switch is the only source of expert-selection
+information. The real-world experiments translate this into
+end-to-end WER reductions on AMI and VoxPopuli relative to the best
+single base model and the ROVER and MLP-pool baselines, while only
+running one full STT pipeline per clip at inference time.
+
+The loss ablation surfaces a non-obvious point: optimizing the
+selection accuracy and optimizing the resulting WER are not the
+same objective. The soft cross-entropy term, by carrying the WER
+gaps directly into the gradient, drives the router toward decisions
+whose worst case is bounded, even when it sometimes \emph{misses}
+the oracle expert in cases where the gap is small. This matches the
+intuition that what matters operationally is how bad the chosen
+expert is, not how often it equals the oracle.
+
+The proposed framework has two limitations worth stating. First, the
+router still requires the encoder of every base model to run on each
+clip, even though only one full STT pipeline is decoded; the savings
+come from the decoder side. For models with comparable encoder and
+decoder costs, the inference saving is correspondingly smaller.
+Second, the router operates per clip and does not share information
+across clips of the same recording. Long-form scenarios where speaker
+and channel persist across clips are likely to benefit from
+across-clip context, which we leave as a natural extension.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
-\clearpage
+% \clearpage
 
 \bibliographystyle{ieeetr}
 \bibliography{reference}

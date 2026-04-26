@@ -1,0 +1,70 @@
+\begin{thebibliography}{10}
+
+\bibitem{vaswani2017attention}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez,
+  {\L}.~Kaiser, and I.~Polosukhin, ``Attention is all you need,'' in {\em Proc.
+  31st Conf. Neural Inf. Process. Syst. (NeurIPS)}, pp.~6000--6010, 2017.
+\newblock [Online]. Available:
+  \url{https://papers.nips.cc/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html}.
+
+\bibitem{gulati2020conformer}
+A.~Gulati, J.~Qin, C.-C. Chiu, N.~Parmar, Y.~Zhang, J.~Yu, W.~Han, S.~Wang,
+  Z.~Zhang, Y.~Wu, and et~al., ``Conformer: Convolution-augmented transformer
+  for speech recognition,'' {\em arXiv preprint arXiv:2005.08100}, 2020.
+\newblock [Online]. Available: \url{https://arxiv.org/abs/2005.08100}.
+
+\bibitem{baevski2020wav2vec}
+A.~Baevski, H.~Zhou, A.~Mohamed, and M.~Auli, ``wav2vec 2.0: A framework for
+  self-supervised learning of speech representations,'' in {\em Proc. 34th
+  Conf. Neural Inf. Process. Syst. (NeurIPS)}, 2020.
+\newblock [Online]. Available:
+  \url{https://papers.nips.cc/paper/2020/hash/92d1e1eb1cd6f9fba3227870bb6d7f07-Abstract.html}.
+
+\bibitem{Graves2012SequenceTW}
+A.~Graves, ``Sequence transduction with recurrent neural networks,'' {\em
+  ArXiv}, vol.~abs/1211.3711, 2012.
+
+\bibitem{yu2016asrdeep}
+D.~Yu and L.~Deng, ``Automatic speech recognition: A deep learning approach,''
+  {\em Springer London}, 2015.
+\newblock Chapters 1--2 discuss applications in healthcare, education, and
+  assistive tech.
+
+\bibitem{li2014overviewrobust}
+J.~Li, L.~Deng, Y.~Gong, and R.~Haeb-Umbach, ``An overview of noise-robust
+  automatic speech recognition,'' {\em IEEE/ACM Transactions on Audio, Speech,
+  and Language Processing}, vol.~22, no.~4, pp.~745--777, 2014.
+
+\bibitem{carletta2005ami}
+J.~Carletta, S.~Ashby, S.~Bourban, M.~Flynn, M.~Guillemot, T.~Hain, J.~Kadlec,
+  V.~Karaiskos, W.~Kraaij, M.~Kronenthal, and et~al., ``The ami meeting
+  corpus,'' in {\em Proc. 5th Int. Conf. Methods and Techniques in Behavioral
+  Research}, 2005.
+
+\bibitem{wang2021voxpopuli}
+C.~Wang, M.~Riviere, A.~Lee, A.~Wu, C.~Talnikar, D.~Haziza, M.~Williamson,
+  J.~Pino, and E.~Dupoux, ``Voxpopuli: A large-scale multilingual speech corpus
+  for representation learning, semi-supervised learning and interpretation,''
+  in {\em Proc. 59th Annu. Meeting Assoc. Comput. Linguistics (ACL-IJCNLP)},
+  pp.~993--1003, 2021.
+
+\bibitem{hsu2021hubert}
+W.-N. Hsu, B.~Bolte, Y.-H.~H. Tsai, K.~Lakhotia, R.~Salakhutdinov, and
+  A.~Mohamed, ``Hubert: Self-supervised speech representation learning by
+  masked prediction of hidden units,'' {\em IEEE/ACM Transactions on Audio,
+  Speech, and Language Processing}, vol.~29, p.~3451–3460, Oct. 2021.
+
+\bibitem{radford2022whisper}
+A.~Radford, J.~W. Kim, T.~Xu, G.~Brockman, C.~McLeavey, and I.~Sutskever,
+  ``Robust speech recognition via large-scale weak supervision,'' in {\em Proc.
+  Int. Conf. Mach. Learn. (ICML)}, pp.~28492--28518, 2023.
+\newblock [Online]. Available:
+  \url{https://proceedings.mlr.press/v202/radford23a.html}.
+
+\bibitem{fiscus1997rover}
+J.~Fiscus, ``A post-processing system to yield reduced word error rates:
+  Recognizer output voting error reduction (rover),'' in {\em 1997 IEEE
+  Workshop on Automatic Speech Recognition and Understanding Proceedings},
+  pp.~347--354, 1997.
+
+\end{thebibliography}
