@@ -1,0 +1,61 @@
+\begin{thebibliography}{10}
+
+\bibitem{vaswani2017attention}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, {\L}.~Kaiser, and I.~Polosukhin, ``Attention is all you need,'' in {\em Proc. 31st Conf. Neural Inf. Process. Syst. (NeurIPS)}, pp.~6000--6010, 2017.
+\newblock [Online]. Available: \url{https://papers.nips.cc/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html}.
+
+\bibitem{gulati2020conformer}
+A.~Gulati, J.~Qin, C.-C. Chiu, N.~Parmar, Y.~Zhang, J.~Yu, W.~Han, S.~Wang, Z.~Zhang, Y.~Wu, and et~al., ``Conformer: Convolution-augmented transformer for speech recognition,'' {\em arXiv preprint arXiv:2005.08100}, 2020.
+\newblock [Online]. Available: \url{https://arxiv.org/abs/2005.08100}.
+
+\bibitem{baevski2020wav2vec}
+A.~Baevski, H.~Zhou, A.~Mohamed, and M.~Auli, ``wav2vec 2.0: A framework for self-supervised learning of speech representations,'' in {\em Proc. 34th Conf. Neural Inf. Process. Syst. (NeurIPS)}, 2020.
+\newblock [Online]. Available: \url{https://papers.nips.cc/paper/2020/hash/92d1e1eb1cd6f9fba3227870bb6d7f07-Abstract.html}.
+
+\bibitem{Graves2012SequenceTW}
+A.~Graves, ``Sequence transduction with recurrent neural networks,'' {\em ArXiv}, vol.~abs/1211.3711, 2012.
+
+\bibitem{yu2016asrdeep}
+D.~Yu and L.~Deng, ``Automatic speech recognition: A deep learning approach,'' {\em Springer London}, 2015.
+\newblock Chapters 1--2 discuss applications in healthcare, education, and assistive tech.
+
+\bibitem{li2014overviewrobust}
+J.~Li, L.~Deng, Y.~Gong, and R.~Haeb-Umbach, ``An overview of noise-robust automatic speech recognition,'' {\em IEEE/ACM Transactions on Audio, Speech, and Language Processing}, vol.~22, no.~4, pp.~745--777, 2014.
+
+\bibitem{rabiner1993fundamentals}
+L.~Rabiner and B.-H. Juang, {\em Fundamentals of speech recognition}.
+\newblock USA: Prentice-Hall, Inc., 1993.
+
+\bibitem{li2023emotionalasr}
+Y.~Li, Z.~Zhao, O.~Klejch, P.~Bell, and C.~Lai, ``Asr and emotional speech: A word-level investigation of the mutual impact of speech and emotion recognition,'' {\em arXiv preprint arXiv:2305.16065}, 2023.
+\newblock [Online]. Available: \url{https://arxiv.org/abs/2305.16065}.
+
+\bibitem{davis1980mfcc}
+S.~Davis and P.~Mermelstein, ``Comparison of parametric representations for monosyllabic word recognition in continuously spoken sentences,'' {\em IEEE Transactions on Acoustics, Speech, and Signal Processing}, vol.~28, no.~4, pp.~357--366, 1980.
+
+\bibitem{furui1986deltas}
+S.~Furui, ``Speaker-independent isolated word recognition using dynamic features of speech spectrum,'' {\em IEEE Transactions on Acoustics, Speech, and Signal Processing}, vol.~34, no.~1, pp.~52--59, 1986.
+
+\bibitem{boersma2001praat}
+P.~Boersma and D.~Weenink, ``Praat, a system for doing phonetics by computer,'' {\em Glot international}, vol.~5, pp.~341--345, 01 2001.
+
+\bibitem{sohn1999vad}
+J.~Sohn, N.~S. Kim, and W.~Sung, ``A statistical model-based voice activity detection,'' {\em IEEE Signal Processing Letters}, vol.~6, no.~1, pp.~1--3, 1999.
+
+\bibitem{hsu2021hubert}
+W.-N. Hsu, B.~Bolte, Y.-H.~H. Tsai, K.~Lakhotia, R.~Salakhutdinov, and A.~Mohamed, ``Hubert: Self-supervised speech representation learning by masked prediction of hidden units,'' {\em IEEE/ACM Transactions on Audio, Speech, and Language Processing}, vol.~29, p.~3451–3460, Oct. 2021.
+
+\bibitem{schuller2013computational}
+B.~Schuller and A.~Batliner, {\em Computational Paralinguistics: Emotion, Affect and Personality in Speech and Language Processing}.
+\newblock Wiley Publishing, 1st~ed., 2013.
+
+\bibitem{eyben2015opensmile}
+F.~Eyben, K.~R. Scherer, B.~W. Schuller, J.~Sundberg, E.~André, C.~Busso, L.~Y. Devillers, J.~Epps, P.~Laukka, S.~S. Narayanan, and K.~P. Truong, ``The geneva minimalistic acoustic parameter set (gemaps) for voice research and affective computing,'' {\em IEEE Transactions on Affective Computing}, vol.~7, no.~2, pp.~190--202, 2016.
+
+\bibitem{ko2015audio}
+T.~Ko, V.~Peddinti, D.~Povey, and S.~Khudanpur, ``Audio augmentation for speech recognition,'' in {\em Proceedings of Interspeech 2015}, pp.~3586--3589, Sept. 2015.
+
+\bibitem{zhang2020ttransducer}
+Y.~Zhang, T.~N. Sainath, R.~J. Weiss, and A.~Narayanan, ``Transformer transducer: One model unifying streaming and non‑streaming speech recognition,'' {\em IEEE/ACM Transactions on Audio, Speech, and Language Processing}, vol.~28, pp.~1599--1613, 2020.
+
+\end{thebibliography}
