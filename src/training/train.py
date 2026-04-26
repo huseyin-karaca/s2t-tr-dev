@@ -1,5 +1,11 @@
 """PyTorch Lightning training script for the ASR Model Selector.
 
+Architectures (see ``--arch``):
+    hierarchical_transformer (default): the proposed hierarchical
+        transformer router from :mod:`src.models.selector`.
+    mlp_pool: a mean-pool MLP baseline from :mod:`src.models.mlp_pool`
+        used in the synthetic experiment and as a real-world baseline.
+
 Loss:
     Primary: Weighted WER = sum(p_k * wer_k) per sample, averaged over batch.
         Differentiable through softmax; pushes probability toward the model
@@ -13,6 +19,14 @@ Full training run:
         --batch-size 8 \
         --max-epochs 50 \
         --experiment-name ami_full
+
+MLP-pool baseline run:
+    python -m src.training.train \
+        --arch mlp_pool \
+        --parquet-path data/processed/edinburghcstr_ami/combined_features.parquet \
+        --batch-size 8 \
+        --max-epochs 50 \
+        --experiment-name ami_full_mlp_pool
 
 Sample run (quick smoke test to verify the pipeline end-to-end):
     python -m src.training.train \
@@ -52,7 +66,12 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader, random_split
 
 from src.data.dataset import MODEL_NAMES, ASRFeatureDataset, collate_fn
+from src.models.mlp_pool import MLPPoolSelector
 from src.models.selector import ASRModelSelector
+
+ARCH_HIERARCHICAL = "hierarchical_transformer"
+ARCH_MLP_POOL = "mlp_pool"
+SUPPORTED_ARCHS = (ARCH_HIERARCHICAL, ARCH_MLP_POOL)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +89,7 @@ class ASRSelectorModule(pl.LightningModule):
 
     def __init__(
         self,
+        arch: str = ARCH_HIERARCHICAL,
         d_model: int = 256,
         n_heads: int = 4,
         stage1_layers: int = 2,
@@ -79,6 +99,8 @@ class ASRSelectorModule(pl.LightningModule):
         use_cross_attention_bridge: bool = True,
         share_stage1_weights: bool = True,
         max_seq_len: int = 2000,
+        mlp_hidden: int = 1024,
+        mlp_layers: int = 2,
         learning_rate: float = 1e-4,
         weight_decay: float = 1e-2,
         warmup_steps: int = 200,
@@ -90,38 +112,66 @@ class ASRSelectorModule(pl.LightningModule):
         label_smoothing: float = 0.1,
     ):
         """Args:
-            d_model: Shared transformer hidden dimension.
-            n_heads: Number of attention heads.
-            stage1_layers: Transformer layers in Stage 1.
-            stage2_layers: Transformer layers in Stage 2.
-            ffn_dim: Feed-forward dimension.
-            dropout: Dropout probability.
-            use_cross_attention_bridge: Whether to use cross-attention bridge.
-            share_stage1_weights: Whether Stage 1 weights are shared across models.
-            max_seq_len: Maximum sequence length.
+            arch: Routing architecture; one of ``"hierarchical_transformer"``
+                (default, the proposed model in
+                :class:`src.models.selector.ASRModelSelector`) or
+                ``"mlp_pool"`` (mean-pool baseline in
+                :class:`src.models.mlp_pool.MLPPoolSelector`).
+            d_model: Shared transformer hidden dimension (hierarchical only).
+            n_heads: Number of attention heads (hierarchical only).
+            stage1_layers: Transformer layers in Stage 1 (hierarchical only).
+            stage2_layers: Transformer layers in Stage 2 (hierarchical only).
+            ffn_dim: Feed-forward dimension (hierarchical only).
+            dropout: Dropout probability (both architectures).
+            use_cross_attention_bridge: Whether to use cross-attention
+                bridge (hierarchical only).
+            share_stage1_weights: Whether Stage 1 weights are shared across
+                models (hierarchical only).
+            max_seq_len: Maximum sequence length for positional encoding
+                (hierarchical only).
+            mlp_hidden: Hidden width of each MLP layer (mlp_pool only).
+            mlp_layers: Number of hidden layers in the MLP (mlp_pool only).
             learning_rate: Peak learning rate for AdamW.
             weight_decay: Weight decay for AdamW.
             warmup_steps: Linear warmup steps.
             total_steps: Total training steps for cosine annealing.
-            aux_ce_weight: Weight of the auxiliary cross-entropy loss.
-            label_smoothing: Label smoothing for auxiliary CE loss.
+            primary_weight: Weight of the weighted-WER primary loss.
+            aux_ce_weight: Weight of the auxiliary hard-label CE loss.
+            soft_ce_weight: Weight of the auxiliary soft-target CE loss.
+            soft_ce_temperature: Temperature for the soft CE target.
+            label_smoothing: Label smoothing for the hard CE loss.
         """
         super().__init__()
         self.save_hyperparameters()
 
-        self.model = ASRModelSelector(
-            model_dims=MODEL_DIMS,
-            model_names=MODEL_NAMES,
-            d_model=d_model,
-            n_heads=n_heads,
-            stage1_layers=stage1_layers,
-            stage2_layers=stage2_layers,
-            ffn_dim=ffn_dim,
-            dropout=dropout,
-            use_cross_attention_bridge=use_cross_attention_bridge,
-            share_stage1_weights=share_stage1_weights,
-            max_seq_len=max_seq_len,
-        )
+        if arch not in SUPPORTED_ARCHS:
+            raise ValueError(
+                f"Unknown arch={arch!r}; expected one of {SUPPORTED_ARCHS}."
+            )
+        self.arch = arch
+
+        if arch == ARCH_HIERARCHICAL:
+            self.model = ASRModelSelector(
+                model_dims=MODEL_DIMS,
+                model_names=MODEL_NAMES,
+                d_model=d_model,
+                n_heads=n_heads,
+                stage1_layers=stage1_layers,
+                stage2_layers=stage2_layers,
+                ffn_dim=ffn_dim,
+                dropout=dropout,
+                use_cross_attention_bridge=use_cross_attention_bridge,
+                share_stage1_weights=share_stage1_weights,
+                max_seq_len=max_seq_len,
+            )
+        else:
+            self.model = MLPPoolSelector(
+                model_dims=MODEL_DIMS,
+                model_names=MODEL_NAMES,
+                d_hidden=mlp_hidden,
+                n_layers=mlp_layers,
+                dropout=dropout,
+            )
 
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -263,6 +313,10 @@ def train(
     batch_size: int = typer.Option(4, "--batch-size", "-b"),
     num_workers: int = typer.Option(4, "--num-workers"),
     # Model
+    arch: str = typer.Option(
+        ARCH_HIERARCHICAL, "--arch",
+        help=f"Routing architecture: one of {SUPPORTED_ARCHS}.",
+    ),
     d_model: int = typer.Option(256, "--d-model"),
     n_heads: int = typer.Option(4, "--n-heads"),
     stage1_layers: int = typer.Option(2, "--stage1-layers"),
@@ -273,6 +327,14 @@ def train(
     separate_stage1: bool = typer.Option(
         False, "--separate-stage1",
         help="Use separate Stage 1 weights per model (default: shared).",
+    ),
+    mlp_hidden: int = typer.Option(
+        1024, "--mlp-hidden",
+        help="Hidden width of each MLP layer (used when --arch mlp_pool).",
+    ),
+    mlp_layers: int = typer.Option(
+        2, "--mlp-layers",
+        help="Number of hidden layers in the MLP (used when --arch mlp_pool).",
     ),
     # Training
     learning_rate: float = typer.Option(1e-4, "--learning-rate", "--lr"),
@@ -349,6 +411,7 @@ def train(
     total_steps = steps_per_epoch * max_epochs
 
     lightning_model = ASRSelectorModule(
+        arch=arch,
         d_model=d_model,
         n_heads=n_heads,
         stage1_layers=stage1_layers,
@@ -358,6 +421,8 @@ def train(
         use_cross_attention_bridge=not no_cross_attention,
         share_stage1_weights=not separate_stage1,
         max_seq_len=max_seq_len,
+        mlp_hidden=mlp_hidden,
+        mlp_layers=mlp_layers,
         learning_rate=learning_rate,
         weight_decay=weight_decay,
         warmup_steps=warmup_steps,
@@ -428,11 +493,13 @@ def train(
         "train_ratio": train_ratio, "val_ratio": val_ratio,
         "max_seq_len": max_seq_len, "batch_size": batch_size,
         "num_workers": num_workers,
+        "arch": arch,
         "d_model": d_model, "n_heads": n_heads,
         "stage1_layers": stage1_layers, "stage2_layers": stage2_layers,
         "ffn_dim": ffn_dim, "dropout": dropout,
         "use_cross_attention_bridge": not no_cross_attention,
         "share_stage1_weights": not separate_stage1,
+        "mlp_hidden": mlp_hidden, "mlp_layers": mlp_layers,
         "learning_rate": learning_rate, "weight_decay": weight_decay,
         "warmup_steps": warmup_steps, "max_epochs": max_epochs,
         "primary_weight": primary_weight,
