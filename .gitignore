@@ -190,4 +190,4 @@ cython_debug/
 
 # PyPI configuration file
 .pypircmodels/
-models/
+/models/
