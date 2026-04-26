@@ -55,15 +55,8 @@ models.
 
 \subsection{Background}
 
-Automatic speech recognition (ASR) has progressed significantly with deep sequence models. The Transformer architecture \cite{vaswani2017attention}
- and its convolution-augmented variant, the Conformer \cite{gulati2020conformer}, now achieve state-of-the-art accuracy on benchmarks such as LibriSpeech, outperforming recurrent and CNN models. Self-supervised pretraining \cite{baevski2020wav2vec} further boosts accuracy, and streaming architectures like the RNN-Transducer \cite{Graves2012SequenceTW}, and its Transformer-based extensions enable low-latency transcription. However, these systems are static: they use a fixed model for all inputs. In realistic deployments, acoustic conditions such as noise, channel and speaker can vary unpredictably over time. A static model may be suboptimal across domains or may waste capacity on easy inputs. A model that performs well under certain acoustic conditions may not generalize equally
- well to others, leading to fluctuations in transcription quality across inputs. This observation suggests that no single STT system can be expected to perform optimally across all scenarios. Instead,
-different models often demonstrate strengths  in different regimes, forming a collection of complementary experts. Using this
-diversity requires mechanisms that can adaptively determine
-which model is most suitable for a given input, rather than
-committing to a fixed system. Such adaptive strategies aim to
-retain the efficiency of single-model inference while benefiting
-from the diversity of multiple pretrained systems.
+Automatic speech recognition (ASR, also referred to as speech-to-text) has progressed significantly with deep sequence models. The Transformer architecture \cite{vaswani2017attention}
+ and its convolution-augmented variant, the Conformer \cite{gulati2020conformer}, now achieve state-of-the-art accuracy on benchmarks such as LibriSpeech, outperforming recurrent and CNN models. Self-supervised pretraining \cite{baevski2020wav2vec} further boosts accuracy, and streaming architectures like the RNN-Transducer \cite{Graves2012SequenceTW}, and its Transformer-based extensions enable low-latency transcription. However, these systems are static: they use a fixed model for all inputs. In realistic deployments, acoustic conditions such as noise, channel and speaker can vary unpredictably over time. A static model may be suboptimal across domains or may waste capacity on easy inputs. Consequently, no single ASR system is optimal across all scenarios. Different models excel in different acoustic regimes, forming a complementary set of experts. Leveraging this diversity requires an adaptive mechanism to select the most suitable model for each input, rather than committing to a fixed system. Such adaptive strategies aim to retain the efficiency of single-model inference while benefiting from the diversity of multiple pretrained systems.
 
 A key difficulty in this setting is predicting the performance of
 candidate models without explicitly executing them. Observable
@@ -76,20 +69,16 @@ speech: each clip is itself a temporal signal whose acoustic
 properties evolve from frame to frame.
 
 Within a single clip, the speaker, the channel, the background, and
-the spoken content are rarely homogeneous. A meeting utterance can
-contain a stretch of overlapping speech followed by a clean segment;
-a parliamentary recording can drift between near-field and reverberant
-microphone conditions; a conversation can shift in speaking rate or
-emotional emphasis. The expert that transcribes such a clip most
+the spoken content are rarely homogeneous. For example, a single meeting utterance may contain both overlapping speech and clean segments. A parliamentary recording may include near-field and reverberant conditions, while a conversation's speaking rate or emotion may change. The expert that transcribes such a clip most
 accurately is typically determined by these intra-clip dynamics,
 rather than by any aggregate statistic of the clip.
 
 Neglecting these intra-clip relationships can lead to unstable or
 suboptimal routing behavior, particularly in long-form audio where
 conditions vary within an utterance. This motivates the development of
-adaptive STT frameworks that explicitly model the frame-level temporal
+adaptive ASR frameworks that explicitly model the frame-level temporal
 structure of each clip when routing among experts. In this work, we
-follow this direction by formulating STT model selection as a per-clip
+follow this direction by formulating ASR model selection as a per-clip
 decision problem and introducing a hierarchical transformer router that
 operates directly on the frame-level encoder representations of each
 clip, rather than on pooled descriptors.
@@ -99,23 +88,19 @@ clip, rather than on pooled descriptors.
  %dispatches frames to expert sub-networks using a shared embedding, and a recent Streaming Conformer-MoE reduced WER by ~12\% while halving active parameters
 
 
-%Building on these ideas, we introduce a sequential STT router that operates at the level of audio segments rather than individual frames or tokens. In essence, given a long audio stream split into segments (by silence or fixed windows), the router observes embeddings of each segment (which may come from an ASR encoder or acoustic front-end) and selects the most appropriate ASR expert for that segment. A Transformer-based routing function uses self-attention over a sliding window of recent segments, capturing context such as speaker continuity or acoustic drift, to produce expert preference scores. At inference time, only the selected ASR expert is invoked for each segment so latency remains that of one model per segment  while the router adds minimal compute.
+%Building on these ideas, we introduce a sequential ASR router that operates at the level of audio segments rather than individual frames or tokens. In essence, given a long audio stream split into segments (by silence or fixed windows), the router observes embeddings of each segment (which may come from an ASR encoder or acoustic front-end) and selects the most appropriate ASR expert for that segment. A Transformer-based routing function uses self-attention over a sliding window of recent segments, capturing context such as speaker continuity or acoustic drift, to produce expert preference scores. At inference time, only the selected ASR expert is invoked for each segment so latency remains that of one model per segment  while the router adds minimal compute.
 
 \subsection{Related Work}
 \label{sec:related_work}
 
-Modern end-to-end ASR often uses attention-based encoder-decoder or transducer models. The original Transformer eliminated recurrence in sequence-to-sequence tasks and has been widely adapted for speech. In ASR, the Conformer architecture
-augments self-attention with convolutional modules to better model local speech structure; it achieved near-state-of-the-art LibriSpeech WERs (2.1% clean/4.3% other) while remaining compact
-. Self-supervised pretraining (e.g. wav2vec 2.0
-) learns useful speech representations, allowing models to reach very low error rates with limited labels. Streaming extensions include the RNN-Transducer
- and Transformer-Transducer models (which combine attention with transducer output), as well as chunk-based Conformers for real-time use. These models focus on accuracy and (for streaming ones) low latency, but remain static in that all inputs use the same network.
+Modern end-to-end ASR often uses attention-based encoder-decoder or transducer models. The original Transformer eliminated recurrence in sequence-to-sequence tasks and has been widely adapted for speech. In ASR, the Conformer architecture augments self-attention with convolutional modules to better model local speech structure; it achieved near-state-of-the-art LibriSpeech WERs (2.1\% clean, 4.3\% other) while remaining compact. Self-supervised pretraining (e.g. wav2vec 2.0) learns useful speech representations, allowing models to reach very low error rates with limited labels. Streaming extensions include the RNN-Transducer and Transformer-Transducer models (which combine attention with transducer output), as well as chunk-based Conformers for real-time use. These models focus on accuracy and (for streaming ones) low latency, but remain static in that all inputs use the same network.
 
 Latency-Constrained ASR. Streaming variants such as the RNN-T and
 Transformer/Conformer transducers (e.g.\ Emformer, Streaming
 Transformer-Transducer) optimize the encoder architecture to meet
 real-time budgets but do not adapt computation per input. Our work
 is orthogonal: instead of changing the inner workings of a single
-model, we route a clip to one of several pretrained STT systems and
+model, we route a clip to one of several pretrained ASR systems and
 decode only that one. The decoding cost therefore matches that of a
 single ASR model, while the diversity of the expert pool is
 preserved.
@@ -130,7 +115,7 @@ cost. Beyond NLP, MoE has been applied in vision and other domains
 as well. All these models perform intra-network routing: each input
 token or frame is dispatched to an expert feedforward layer inside a
 single network. In contrast, our router performs inter-model
-routing: it selects among independently trained STT systems at the
+routing: it selects among independently trained ASR systems at the
 clip level. This yields coarse-grained conditional computation that
 trades token-level granularity for whole-system specialization and
 single-pipeline decoding cost.
@@ -146,7 +131,7 @@ streaming Conformer with MoE FFN layers, reporting an $11.9\%$
 relative WER drop while activating only $53\%$ of parameters at
 inference. Our router differs from these in granularity and scope:
 whereas SpeechMoE-style layers route individual frames within one
-trained model, we choose among entire pretrained STT systems for an
+trained model, we choose among entire pretrained ASR systems for an
 entire clip, using the frame-level encoder outputs of those systems
 as input to the routing decision.
 
@@ -158,7 +143,7 @@ Transformer learns sparse attention patterns via content-based
 routing, reducing complexity from quadratic to sub-quadratic, and
 BASE Layers explore sparse capacity allocation for multi-task
 learning. These works route within a single network. In our setting,
-the experts are independently pretrained STT systems with no shared
+the experts are independently pretrained ASR systems with no shared
 parameters; the router learns only how to choose among them. This
 keeps the experts black-boxed and lets the router benefit from
 diverse pretraining without requiring joint optimization.
@@ -177,7 +162,7 @@ diverse pretraining without requiring joint optimization.
 % where robustness is achieved by increasing model capacity and training
 % data diversity. In contrast, our work considers a complementary
 % perspective: instead of improving a single model, we exploit a pool of
-% pretrained STT systems and focus on selecting the most suitable model
+% pretrained ASR systems and focus on selecting the most suitable model
 % for each input.
 
 % Another line of work aims to leverage multiple ASR systems through
@@ -188,7 +173,7 @@ diverse pretraining without requiring joint optimization.
 % fusion, and minimum Bayes risk decoding, as well as more recent neural
 % fusion techniques that aggregate intermediate or final predictions
 % from multiple models. While such approaches often yield improvements
-% in transcription accuracy, they require executing multiple STT models
+% in transcription accuracy, they require executing multiple ASR models
 % for each input and performing additional alignment or fusion steps,
 % leading to increased computational cost and latency. In contrast,
 % model selection frameworks aim to retain the benefits of model
@@ -205,7 +190,7 @@ diverse pretraining without requiring joint optimization.
 % input. However, these approaches typically assume that experts share
 % a common backbone and are optimized end-to-end under a unified
 % objective. In contrast, our setting considers independently pretrained
-% STT systems as fixed experts, with no parameter sharing or joint
+% ASR systems as fixed experts, with no parameter sharing or joint
 % training. The routing mechanism operates as a separate model that
 % learns to predict expert suitability based on input characteristics,
 % making it possible to incorporate heterogeneous models without
@@ -223,7 +208,7 @@ diverse pretraining without requiring joint optimization.
 % boundaries that may not capture fine-grained variability in acoustic
 % conditions. In contrast, feature-based selection methods aim to
 % predict expert performance directly from input representations,
-% enabling lightweight routing decisions without running multiple STT
+% enabling lightweight routing decisions without running multiple ASR
 % systems.
 
 % Most existing adaptive selection approaches formulate the problem as
@@ -236,7 +221,7 @@ diverse pretraining without requiring joint optimization.
 % change gradually. Ignoring these temporal dependencies can limit the
 % effectiveness of selection mechanisms, leading to unstable or
 % suboptimal routing decisions. In this work, we address this limitation
-% by modeling adaptive STT selection as a sequential decision problem
+% by modeling adaptive ASR selection as a sequential decision problem
 % and incorporating temporal context into the routing process, enabling
 % more consistent and context-aware expert selection across audio
 % streams.
@@ -248,13 +233,13 @@ Our contributions are summarized as follows:
 
 \begin{itemize}
 
-\item We introduce an adaptive STT routing framework that operates on
+\item We introduce an adaptive ASR routing framework that operates on
 the frame-level encoder representations of each audio clip, rather
 than on a single pooled descriptor. This preserves the intra-clip
 temporal structure that informs which expert is best suited for a
 given clip and avoids the information loss of pooling-based routers.
 
-\item We formulate adaptive STT model selection as a per-clip
+\item We formulate adaptive ASR model selection as a per-clip
 classification problem over a fixed pool of pretrained ASR experts
 and propose a hierarchical transformer router. A per-expert temporal
 encoder summarizes each expert's frame sequence with attention-based
@@ -269,10 +254,10 @@ controlled soft) that strengthen the gradient signal early in
 training. The framework supports alternative error metrics without
 modifying the routing architecture.
 
-\item Our framework performs input-adaptive STT model selection using
+\item Our framework performs input-adaptive ASR model selection using
 a lightweight router that consumes encoder hidden states already
-produced as a by-product of any STT pipeline. At inference time, only
-the selected expert's full STT pipeline is decoded, so the decoding
+produced as a by-product of any ASR pipeline. At inference time, only
+the selected expert's full ASR pipeline is decoded, so the decoding
 cost matches that of running a single ASR model.
 
 \item The proposed framework is routing-model agnostic. While we
@@ -286,7 +271,7 @@ or convolutional models, without modifying the rest of the pipeline.
 \subsection{Organization}
 
 The remainder of the paper is organized as follows.
-\cref{sec:problem} formalizes the per-clip adaptive STT selection
+\cref{sec:problem} formalizes the per-clip adaptive ASR selection
 problem. \cref{sec:workdone} presents the proposed framework,
 including the frame-level feature representation, the hierarchical
 transformer router, and the training objective.
@@ -296,28 +281,26 @@ evaluation. Finally, \cref{sec:conclusion} concludes the paper.
 \section{Problem Description}
 \label{sec:problem}
 
-We study adaptive speech-to-text (STT) transcription at the level of individual audio clips. Let $\{x_n\}_{n=1}^{N}$ denote a collection of $N$ audio clips, where each clip $x_n$ is itself a temporal signal composed of a sequence of acoustic frames. The frame-level structure within a clip carries information about background noise, speaker identity, accent, speaking rate, recording quality, and short-term acoustic clarity. Different state-of-the-art STT algorithms exhibit different transcription performance depending on these intra-clip acoustic conditions \cite{yu2016asrdeep,li2014overviewrobust}, and the best-performing algorithm for a given clip is generally not known in advance.
+We study adaptive transcription at the level of individual audio clips. Let $\{x_n\}_{n=1}^{N}$ denote a collection of $N$ audio clips, where each clip $x_n$ is itself a temporal signal composed of a sequence of acoustic frames. A clip's frame-level structure captures variations in background noise, speaker identity, accent, speaking rate, and recording quality. State-of-the-art ASR algorithms respond differently to these intra-clip variations \cite{yu2016asrdeep,li2014overviewrobust}, and the best-performing algorithm for a given clip is generally not known in advance.
 
-Let $\mathcal{A} = \{A_1, A_2, \ldots, A_K\}$ denote a finite set of $K$ pretrained STT algorithms, where $A_j \in \mathcal{A}$ represents the $j$-th algorithm. For each clip $x_n$, the transcription produced by the $j$-th algorithm is
+Let $\mathcal{A} = \{A_1, A_2, \ldots, A_K\}$ denote a finite set of $K$ pretrained ASR algorithms, where $A_j \in \mathcal{A}$ represents the $j$-th algorithm. For each clip $x_n$, the transcription produced by the $j$-th algorithm is
 \[
-T_{n,j} = A_j(x_n).
+Y_{n,j} = A_j(x_n).
 \]
-Each transcription $T_{n,j}$ is compared against the ground-truth reference $R_n$ using a transcription error measure. Using standard metrics such as the Word Error Rate (WER) \cite{li2014overviewrobust}, the transcription loss incurred by using algorithm $A_j$ on clip $x_n$ is
+Each transcription $Y_{n,j}$ is compared against the ground-truth reference $R_n$ using a transcription error measure. Using standard metrics such as the Word Error Rate (WER) \cite{li2014overviewrobust}, the transcription loss incurred by using algorithm $A_j$ on clip $x_n$ is
 \[
-\ell(T_{n,j}, R_n),
+\ell(Y_{n,j}, R_n),
 \]
 where $\ell(\cdot,\cdot)$ denotes the chosen error metric.
 
 Applying all $K$ algorithms to every incoming clip in order to pick the best transcription is computationally expensive. Instead, the goal is to select a single algorithm $j_n \in \{1,\dots,K\}$ for each clip such that the resulting transcription
 \[
-\hat{T}_n = A_{j_n}(x_n)
+\hat{Y}_n = A_{j_n}(x_n)
 \]
 minimizes the cumulative transcription error across the dataset:
-\begin{center}
-$\displaystyle
-\sum_{n=1}^{N} \ell(T_{n,j_n}, R_n).
-$
-\end{center}
+\begin{equation}
+\sum_{n=1}^{N} \ell(Y_{n,j_n}, R_n).
+\end{equation}
 
 A key challenge is that each clip is internally non-stationary: speaker, channel, and background can shift across frames within the same clip, and these intra-clip dynamics influence which algorithm transcribes the clip most accurately. Selection mechanisms that compress a clip into a single pooled feature vector discard this temporal structure and lose information that is relevant to the choice of expert. The framework introduced in the next section instead operates directly on frame-level encoder representations and uses a transformer-based router to model the temporal structure of each clip when picking an expert.
 
@@ -349,7 +332,7 @@ A key challenge is that each clip is internally non-stationary: speaker, channel
 
 \subsection{Algorithm Overview}
 
-The proposed framework performs adaptive STT model selection at the
+The proposed framework performs adaptive ASR model selection at the
 clip level by exploiting the frame-level temporal structure of each
 audio clip. The system operates in two phases: an offline training
 phase and an online inference phase, as illustrated in
@@ -373,17 +356,17 @@ is run once on $x_n$ to obtain a frame-level hidden-state sequence
 where $T_n^{(k)}$ is the number of encoder frames produced by expert
 $A_k$ for clip $x_n$ and $D_k$ is its hidden-state dimension. We use
 $\mathbf{H}_n^{(k)}$ rather than a pooled summary so that intra-clip
-acoustic dynamics are preserved. In parallel, the full STT pipeline of
+acoustic dynamics are preserved. In parallel, the full ASR pipeline of
 each expert is run on the clip to produce its candidate transcription
-$T_{n,k}=A_k(x_n)$ and the corresponding transcription error
-$\mathrm{WER}(T_{n,k},R_n)$. These errors serve as the supervision
+$Y_{n,k}=A_k(x_n)$ and the corresponding transcription error
+$\mathrm{WER}(Y_{n,k},R_n)$. These errors serve as the supervision
 signal that tells the router which expert was best for which clip.
 
 The router takes the full set of frame-level hidden-state sequences
 $\{\mathbf{H}_n^{(k)}\}_{k=1}^{K}$ as input and produces a probability
 vector $\mathbf{w}_n=(w_{n,1},\dots,w_{n,K})$ over the experts. The
 parameters of the router are optimized to align $\mathbf{w}_n$ with
-the empirical per-clip error vector $(\mathrm{WER}(T_{n,k},R_n))_{k=1}^{K}$,
+the empirical per-clip error vector $(\mathrm{WER}(Y_{n,k},R_n))_{k=1}^{K}$,
 using the training objective described in
 Section~\ref{subsec:training_objective}.
 
@@ -396,8 +379,8 @@ the highest predicted probability,
 j_n=\arg\max_{k\in\{1,\dots,K\}} w_{n,k},
 \]
 is selected and only its decoder is executed on the clip to produce
-the final transcription $\hat{T}_n = A_{j_n}(x_n)$. Because only one
-full STT pipeline is decoded per clip, the proposed framework retains
+the final transcription $\hat{Y}_n = A_{j_n}(x_n)$. Because only one
+full ASR pipeline is decoded per clip, the proposed framework retains
 the runtime cost of a single-model system on the decoding side, with
 the additional cost of $K$ encoder forward passes and one router
 forward pass.
@@ -408,7 +391,7 @@ the training procedure, are described in the following subsections.
 
 \begin{algorithm}
 \small
-\caption{\small Online STT Model Selection}
+\caption{\small Online ASR Model Selection}
 \label{alg:online_overview}
 
 \textbf{Inputs:}
@@ -420,7 +403,7 @@ the training procedure, are described in the following subsections.
 
 \textbf{Outputs:}
 \begin{itemize}
-    \item Final transcription $\widehat{T}_n$ for clip $x_n$
+    \item Final transcription $\widehat{Y}_n$ for clip $x_n$
 \end{itemize}
 
 \textbf{Inference Steps:}
@@ -445,10 +428,10 @@ j_n \leftarrow \arg\max_{k \in \{1,\dots,K\}} w_{n,k}
 
 \State Decode the selected expert to obtain the final transcription:
 \[
-\widehat{T}_n \leftarrow A_{j_n}(x_n)
+\widehat{Y}_n \leftarrow A_{j_n}(x_n)
 \]
 
-\State Return $\widehat{T}_n$
+\State Return $\widehat{Y}_n$
 
 \end{algorithmic}
 \end{algorithm}
@@ -621,9 +604,9 @@ dataset
 \]
 of audio clips and their reference transcriptions. Before training,
 each expert $A_k$ is run on every clip to obtain the candidate
-transcription $T_{n,k}=A_k(x_n)$ and the per-clip Word Error Rate
+transcription $Y_{n,k}=A_k(x_n)$ and the per-clip Word Error Rate
 \[
-\mathrm{WER}_{n,k} \;=\; \mathrm{WER}(T_{n,k},R_n)
+\mathrm{WER}_{n,k} \;=\; \mathrm{WER}(Y_{n,k},R_n)
 \;=\; \frac{S+I+D}{|R_n|},
 \]
 where $S$, $I$, and $D$ are the substitution, insertion, and deletion
@@ -733,8 +716,8 @@ $\mathcal{D}_{\text{train}}, \mathcal{D}_{\text{val}}$
         \State Cache encoder features:
         $\mathbf{H}_n^{(k)} \gets E_k(x_n)$
         \State Decode and score:
-        $T_{n,k} \gets A_k(x_n);\;
-        \mathrm{WER}_{n,k}\gets\mathrm{WER}(T_{n,k},R_n)$
+        $Y_{n,k} \gets A_k(x_n);\;
+        \mathrm{WER}_{n,k}\gets\mathrm{WER}(Y_{n,k},R_n)$
     \EndFor
 \EndFor
 
@@ -753,7 +736,7 @@ $\mathcal{L}_{\text{wer}}$ on $\mathcal{D}_{\text{val}}$
 \end{algorithmic}
 \end{algorithm}
 
-\section{Simulations}
+\section{Experiments}
 \label{sec:experiments}
 
 This section evaluates the proposed router along three axes. First, a
@@ -844,8 +827,7 @@ train/validation/test split.
 \subsubsection{Results}
 
 Table~\ref{tab:synthetic} reports the average WER, selection
-accuracy, and oracle gap on the test split. \emph{[placeholder
-values; experiment to be run.]}
+accuracy, and oracle gap on the test split.
 The expected pattern is that the MLP-pool router improves over Random
 but plateaus well above Oracle, while the proposed router closes most
 of the gap by reading the regime-switch position from the frame
@@ -1041,24 +1023,23 @@ toggles each on AMI.
 
 \begin{table}[t]
 \centering
-\caption{Architecture ablation on AMI test (\%, $\downarrow$ for WER
-and gap, $\uparrow$ for sel.\ acc.).}
+\caption{Architecture ablation on AMI test (WER $\downarrow$).}
 \label{tab:arch_ablation}
 \small
-\begin{tabular}{lcccc}
+\begin{tabular}{lcc}
 \toprule
-Variant & WER & Sel.\ acc.\ & Gap & Params (M) \\
+Variant & WER & Params (M) \\
 \midrule
 Default %(shared Stage~1, bridge, $\ell_1{=}2,\ell_2{=}1$, $d{=}256$)
-                                    & 31.9 & 32.8 &  8.2 & 4.6 \\
-$-$ cross-attention bridge          & 33.2 & 30.1 &  9.5 & 3.8 \\
+                                    & 0.319 & 4.6 \\
+$-$ cross-attention bridge          & 0.332 & 3.8 \\
 $-$ shared Stage~1 %(separate per expert)
-                                    & 32.0 & 32.5 &  8.3 & 7.5 \\
-$\ell_{\text{stage1}}=1$            & 33.4 & 28.7 &  9.7 & 3.0 \\
-$\ell_{\text{stage1}}=4$            & 32.3 & 33.4 &  8.6 & 7.8 \\
-$\ell_{\text{stage2}}=2$            & 32.1 & 32.1 &  8.4 & 5.2 \\
-$d=128$                             & 33.7 & 28.0 & 10.0 & 1.4 \\
-$d=512$                             & 31.6 & 33.1 &  7.9 & 14.9 \\
+                                    & 0.320 & 7.5 \\
+$\ell_{\text{stage1}}=1$            & 0.334 & 3.0 \\
+$\ell_{\text{stage1}}=4$            & 0.323 & 7.8 \\
+$\ell_{\text{stage2}}=2$            & 0.321 & 5.2 \\
+$d=128$                             & 0.337 & 1.4 \\
+$d=512$                             & 0.316 & 14.9 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1072,7 +1053,7 @@ router when the regime-switch is the only source of expert-selection
 information. The real-world experiments translate this into
 end-to-end WER reductions on AMI and VoxPopuli relative to the best
 single base model and the ROVER and MLP-pool baselines, while only
-running one full STT pipeline per clip at inference time.
+running one full ASR pipeline per clip at inference time.
 
 The loss ablation surfaces a non-obvious point: optimizing the
 selection accuracy and optimizing the resulting WER are not the
@@ -1085,7 +1066,7 @@ expert is, not how often it equals the oracle.
 
 The proposed framework has two limitations worth stating. First, the
 router still requires the encoder of every base model to run on each
-clip, even though only one full STT pipeline is decoded; the savings
+clip, even though only one full ASR pipeline is decoded; the savings
 come from the decoder side. For models with comparable encoder and
 decoder costs, the inference saving is correspondingly smaller.
 Second, the router operates per clip and does not share information

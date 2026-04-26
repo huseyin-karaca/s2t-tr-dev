@@ -26,12 +26,13 @@
 \newlabel{sec:workdone}{{III}{3}{Proposed Model}{section.3}{}}
 \newlabel{sec:workdone@cref}{{[section][3][]III}{[1][3][]3}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Algorithm Overview}{3}{subsection.3.1}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces \relax \fontsize  {9}{10pt}\selectfont  Online STT Model Selection}}{3}{algorithm.1}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces \relax \fontsize  {9}{10pt}\selectfont  Online ASR Model Selection}}{3}{algorithm.1}\protected@file@percent }
 \newlabel{alg:online_overview}{{1}{3}{Algorithm Overview}{algorithm.1}{}}
 \newlabel{alg:online_overview@cref}{{[algorithm][1][]1}{[1][3][]3}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Frame-Level Feature Representation}{3}{subsection.3.2}\protected@file@percent }
 \newlabel{sec:features}{{\mbox  {III-B}}{3}{Frame-Level Feature Representation}{subsection.3.2}{}}
 \newlabel{sec:features@cref}{{[subsection][2][3]\mbox  {III-B}}{[1][3][]3}}
+\citation{vaswani2017attention}
 \citation{vaswani2017attention}
 \@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Overview of the proposed adaptive ASR model selection framework. Each base ASR encoder produces a 2-D frame-level embedding tensor $\mathbf  {H}_n^{(k)}\in \mathbb  {R}^{T_n^{(k)}\times D_k}$ with model-specific frame count $T_n^{(k)}$ and hidden dimension $D_k$; no temporal pooling is applied. Per-model linear projections, sinusoidal positional encodings, and learnable model-identity embeddings bring the heterogeneous sequences into a shared dimension. A shared Stage~1 transformer encoder summarizes each expert's frame sequence with a CLS token; an optional cross-attention bridge lets each summary attend to the frame-level outputs of the other experts; and a Stage~2 transformer fuses the summaries through a global CLS token, which is mapped by a small MLP and softmax to the routing distribution $\mathbf  {w}_n$. Only the argmax expert $A_{j_n}$ is decoded at inference.}}{4}{figure.1}\protected@file@percent }
 \newlabel{fig:architecture}{{1}{4}{Overview of the proposed adaptive ASR model selection framework. Each base ASR encoder produces a 2-D frame-level embedding tensor $\mathbf {H}_n^{(k)}\in \mathbb {R}^{T_n^{(k)}\times D_k}$ with model-specific frame count $T_n^{(k)}$ and hidden dimension $D_k$; no temporal pooling is applied. Per-model linear projections, sinusoidal positional encodings, and learnable model-identity embeddings bring the heterogeneous sequences into a shared dimension. A shared Stage~1 transformer encoder summarizes each expert's frame sequence with a CLS token; an optional cross-attention bridge lets each summary attend to the frame-level outputs of the other experts; and a Stage~2 transformer fuses the summaries through a global CLS token, which is mapped by a small MLP and softmax to the routing distribution $\mathbf {w}_n$. Only the argmax expert $A_{j_n}$ is decoded at inference}{figure.1}{}}
@@ -40,42 +41,42 @@
 \newlabel{subsec:transformer_router}{{\mbox  {III-C}}{4}{Hierarchical Transformer Router}{subsection.3.3}{}}
 \newlabel{subsec:transformer_router@cref}{{[subsection][3][3]\mbox  {III-C}}{[1][4][]4}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}1}Per-Model Projection and Positional Encoding}{4}{subsubsection.3.3.1}\protected@file@percent }
-\newlabel{eq:projection}{{1}{4}{Per-Model Projection and Positional Encoding}{equation.3.1}{}}
-\newlabel{eq:projection@cref}{{[equation][1][]1}{[1][4][]4}}
-\citation{vaswani2017attention}
+\newlabel{eq:projection}{{2}{4}{Per-Model Projection and Positional Encoding}{equation.3.2}{}}
+\newlabel{eq:projection@cref}{{[equation][2][]2}{[1][4][]4}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}2}Stage 1: Per-Expert Temporal Encoder}{4}{subsubsection.3.3.2}\protected@file@percent }
 \citation{li2014overviewrobust}
 \citation{yu2016asrdeep}
 \citation{li2014overviewrobust}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}2}Stage 1: Per-Expert Temporal Encoder}{5}{subsubsection.3.3.2}\protected@file@percent }
-\newlabel{eq:stage1}{{2}{5}{Stage 1: Per-Expert Temporal Encoder}{equation.3.2}{}}
-\newlabel{eq:stage1@cref}{{[equation][2][]2}{[1][5][]5}}
+\newlabel{eq:stage1}{{3}{5}{Stage 1: Per-Expert Temporal Encoder}{equation.3.3}{}}
+\newlabel{eq:stage1@cref}{{[equation][3][]3}{[1][4][]5}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}3}Cross-Attention Bridge (Optional)}{5}{subsubsection.3.3.3}\protected@file@percent }
-\newlabel{eq:bridge}{{3}{5}{Cross-Attention Bridge (Optional)}{equation.3.3}{}}
-\newlabel{eq:bridge@cref}{{[equation][3][]3}{[1][5][]5}}
+\newlabel{eq:bridge}{{4}{5}{Cross-Attention Bridge (Optional)}{equation.3.4}{}}
+\newlabel{eq:bridge@cref}{{[equation][4][]4}{[1][5][]5}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}4}Stage 2: Cross-Expert Fusion}{5}{subsubsection.3.3.4}\protected@file@percent }
-\newlabel{eq:logits}{{4}{5}{Stage 2: Cross-Expert Fusion}{equation.3.4}{}}
-\newlabel{eq:logits@cref}{{[equation][4][]4}{[1][5][]5}}
-\newlabel{eq:router_softmax}{{5}{5}{Stage 2: Cross-Expert Fusion}{equation.3.5}{}}
-\newlabel{eq:router_softmax@cref}{{[equation][5][]5}{[1][5][]5}}
+\newlabel{eq:logits}{{5}{5}{Stage 2: Cross-Expert Fusion}{equation.3.5}{}}
+\newlabel{eq:logits@cref}{{[equation][5][]5}{[1][5][]5}}
+\newlabel{eq:router_softmax}{{6}{5}{Stage 2: Cross-Expert Fusion}{equation.3.6}{}}
+\newlabel{eq:router_softmax@cref}{{[equation][6][]6}{[1][5][]5}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-D}}Training Objective}{5}{subsection.3.4}\protected@file@percent }
 \newlabel{subsec:training_objective}{{\mbox  {III-D}}{5}{Training Objective}{subsection.3.4}{}}
 \newlabel{subsec:training_objective@cref}{{[subsection][4][3]\mbox  {III-D}}{[1][5][]5}}
-\newlabel{eq:loss_wer}{{6}{5}{Training Objective}{equation.3.6}{}}
-\newlabel{eq:loss_wer@cref}{{[equation][6][]6}{[1][5][]5}}
-\newlabel{eq:loss_hard}{{7}{5}{Training Objective}{equation.3.7}{}}
-\newlabel{eq:loss_hard@cref}{{[equation][7][]7}{[1][5][]5}}
-\newlabel{eq:soft_target}{{8}{5}{Training Objective}{equation.3.8}{}}
-\newlabel{eq:soft_target@cref}{{[equation][8][]8}{[1][5][]5}}
-\newlabel{eq:loss_soft}{{9}{5}{Training Objective}{equation.3.9}{}}
-\newlabel{eq:loss_soft@cref}{{[equation][9][]9}{[1][5][]5}}
-\newlabel{eq:total_objective}{{10}{5}{Training Objective}{equation.3.10}{}}
-\newlabel{eq:total_objective@cref}{{[equation][10][]10}{[1][5][]5}}
+\newlabel{eq:loss_wer}{{7}{5}{Training Objective}{equation.3.7}{}}
+\newlabel{eq:loss_wer@cref}{{[equation][7][]7}{[1][5][]5}}
+\newlabel{eq:loss_hard}{{8}{5}{Training Objective}{equation.3.8}{}}
+\newlabel{eq:loss_hard@cref}{{[equation][8][]8}{[1][5][]5}}
+\newlabel{eq:soft_target}{{9}{5}{Training Objective}{equation.3.9}{}}
+\newlabel{eq:soft_target@cref}{{[equation][9][]9}{[1][5][]5}}
+\newlabel{eq:loss_soft}{{10}{5}{Training Objective}{equation.3.10}{}}
+\newlabel{eq:loss_soft@cref}{{[equation][10][]10}{[1][5][]5}}
+\newlabel{eq:total_objective}{{11}{5}{Training Objective}{equation.3.11}{}}
+\newlabel{eq:total_objective@cref}{{[equation][11][]11}{[1][5][]5}}
 \citation{carletta2005ami}
+\citation{wang2021voxpopuli}
 \@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces Offline Training of the Hierarchical Router}}{6}{algorithm.2}\protected@file@percent }
 \newlabel{alg:offline_training}{{2}{6}{Training Objective}{algorithm.2}{}}
 \newlabel{alg:offline_training@cref}{{[algorithm][2][]2}{[1][6][]6}}
-\@writefile{toc}{\contentsline {section}{\numberline {IV}Simulations}{6}{section.4}\protected@file@percent }
-\newlabel{sec:experiments}{{IV}{6}{Simulations}{section.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Experiments}{6}{section.4}\protected@file@percent }
+\newlabel{sec:experiments}{{IV}{6}{Experiments}{section.4}{}}
 \newlabel{sec:experiments@cref}{{[section][4][]IV}{[1][6][]6}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Synthetic Regime-Switch Experiment}{6}{subsection.4.1}\protected@file@percent }
 \newlabel{subsec:synthetic}{{\mbox  {IV-A}}{6}{Synthetic Regime-Switch Experiment}{subsection.4.1}{}}
@@ -88,7 +89,6 @@
 \newlabel{subsec:real}{{\mbox  {IV-B}}{6}{Real-World Results}{subsection.4.2}{}}
 \newlabel{subsec:real@cref}{{[subsection][2][4]\mbox  {IV-B}}{[1][6][]6}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-B}1}Datasets}{6}{subsubsection.4.2.1}\protected@file@percent }
-\citation{wang2021voxpopuli}
 \citation{hsu2021hubert}
 \citation{radford2022whisper}
 \citation{baevski2020wav2vec}
@@ -124,12 +124,12 @@
 \bibcite{hsu2021hubert}{9}
 \bibcite{radford2022whisper}{10}
 \bibcite{fiscus1997rover}{11}
-\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Architecture ablation on AMI test (\%, $\downarrow $ for WER and gap, $\uparrow $ for sel.\ acc.).}}{8}{table.4}\protected@file@percent }
-\newlabel{tab:arch_ablation}{{IV}{8}{Architecture ablation on AMI test (\%, $\downarrow $ for WER and gap, $\uparrow $ for sel.\ acc.)}{table.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Architecture ablation on AMI test (WER $\downarrow $).}}{8}{table.4}\protected@file@percent }
+\newlabel{tab:arch_ablation}{{IV}{8}{Architecture ablation on AMI test (WER $\downarrow $)}{table.4}{}}
 \newlabel{tab:arch_ablation@cref}{{[table][4][]IV}{[1][7][]8}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Discussion}{8}{subsection.4.4}\protected@file@percent }
 \newlabel{subsec:discussion}{{\mbox  {IV-D}}{8}{Discussion}{subsection.4.4}{}}
-\newlabel{subsec:discussion@cref}{{[subsection][4][4]\mbox  {IV-D}}{[1][8][]8}}
+\newlabel{subsec:discussion@cref}{{[subsection][4][4]\mbox  {IV-D}}{[1][7][]8}}
 \@writefile{toc}{\contentsline {section}{\numberline {V}Conclusion}{8}{section.5}\protected@file@percent }
 \newlabel{sec:conclusion}{{V}{8}{Conclusion}{section.5}{}}
 \newlabel{sec:conclusion@cref}{{[section][5][]V}{[1][8][]8}}
