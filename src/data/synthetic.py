@@ -1,5 +1,12 @@
 """Generate a synthetic regime-switch dataset for the model selector.
 
+Parquet schema metadata. The schema-level metadata also carries the
+per-regime mean vectors and the per-(r1, r2, k) WER lookup table under
+the keys ``b"synthetic_regime_centers"`` and ``b"synthetic_wer_table"``
+(JSON-encoded numpy arrays). This makes the parquet self-describing for
+:mod:`src.data.synthetic_inspect`, which reproduces the regime-level
+visualizations directly from the file.
+
 The output parquet matches the schema consumed by
 :class:`src.data.dataset.ASRFeatureDataset` (whisper_features,
 hubert_features, w2v2_features, plus the corresponding _wer columns and
@@ -31,6 +38,7 @@ Usage:
         --num-samples 10000 --frame-length 128 --num-regimes 4 --seed 42
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Dict, Tuple
@@ -39,6 +47,10 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
+
+METADATA_KEY_REGIME_CENTERS = b"synthetic_regime_centers"
+METADATA_KEY_WER_TABLE = b"synthetic_wer_table"
+METADATA_KEY_GEN_PARAMS = b"synthetic_generation_params"
 
 logger = logging.getLogger(__name__)
 app = typer.Typer(help="Generate a synthetic regime-switch parquet for the ASR Model Selector.")
@@ -290,6 +302,25 @@ def generate(
         total_bytes / 1e9, peak_batch_bytes / 1e9, write_batch_size,
     )
 
+    schema_metadata = {
+        METADATA_KEY_REGIME_CENTERS: json.dumps(regime_centers.tolist()).encode("utf-8"),
+        METADATA_KEY_WER_TABLE: json.dumps(wer_table.tolist()).encode("utf-8"),
+        METADATA_KEY_GEN_PARAMS: json.dumps({
+            "num_samples":   num_samples,
+            "frame_length":  frame_length,
+            "num_regimes":   num_regimes,
+            "regime_dim":    regime_dim,
+            "noise_std":     noise_std,
+            "best_wer":      best_wer,
+            "worst_wer":     worst_wer,
+            "wer_noise_std": wer_noise_std,
+            "feature_dtype": feature_dtype,
+            "expert_dims":   EXPERT_DIMS,
+            "expert_order":  EXPERT_ORDER,
+            "seed":          seed,
+        }).encode("utf-8"),
+    }
+
     writer: pq.ParquetWriter = None
     wer_running = []
     n_written = 0
@@ -310,7 +341,8 @@ def generate(
             )
             batch = _record_batch(features, wer_scores, metadata)
             if writer is None:
-                writer = pq.ParquetWriter(out.as_posix(), batch.schema, compression="snappy")
+                schema_with_meta = batch.schema.with_metadata(schema_metadata)
+                writer = pq.ParquetWriter(out.as_posix(), schema_with_meta, compression="snappy")
             writer.write_batch(batch)
             wer_running.append(wer_scores)
 
