@@ -1,0 +1,22 @@
+{
+  "_comment": "Main-results pipeline on AMI. The 'methods' list is the trained-model rows of the AMI main-results table; training-free baselines and ROVER are added by main_results.py automatically.",
+  "parquet_path": "data/processed/edinburghcstr_ami/combined_features_with_transcripts.parquet",
+  "shared": {
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "max_seq_len": 2000,
+    "batch_size": 8,
+    "num_workers": 4,
+    "max_epochs": 50,
+    "learning_rate": 1e-4,
+    "primary_weight": 1.0,
+    "aux_ce_weight": 0.0,
+    "soft_ce_weight": 0.5,
+    "soft_ce_temperature": 0.1,
+    "seed": 42
+  },
+  "methods": [
+    { "name": "mlp_pool",                "arch": "mlp_pool" },
+    { "name": "hierarchical_transformer", "arch": "hierarchical_transformer" }
+  ]
+}

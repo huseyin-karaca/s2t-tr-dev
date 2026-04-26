@@ -4,7 +4,9 @@
       "Bash(.venv/bin/python -m src.experiments.synthetic_sweep run --output-dir /tmp/sweep_smoke --r-values 2,3 --num-samples 200 --frame-length 32 --regime-dim 16 --max-seq-len 64 --batch-size 8 --num-workers 0 --max-epochs 2 --primary-weight 1.0 --aux-ce-weight 0.0 --soft-ce-weight 0.5 --seed 42)",
       "Read(//tmp/**)",
       "Bash(.venv/bin/python -m src.experiments.synthetic_sweep figure --results /tmp/sweep_smoke/sweep_results.json --output-path /tmp/sweep_smoke/sweep_figure.png)",
-      "Bash(.venv/bin/python -c ' *)"
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 /tmp/gen_notebooks.py)"
     ]
   }
 }
