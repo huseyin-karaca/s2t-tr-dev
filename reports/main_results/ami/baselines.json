@@ -1,0 +1,49 @@
+{
+  "parquet_path": "data/processed/edinburghcstr_ami/combined_features_with_transcripts.parquet",
+  "train_ratio": 0.8,
+  "val_ratio": 0.1,
+  "seed": 42,
+  "results": {
+    "test": {
+      "single_hubert": {
+        "wer_mean": 0.6347134113311768,
+        "wer_sem": 0.014537023310863584,
+        "n": 1262
+      },
+      "single_whisper": {
+        "wer_mean": 0.7087998986244202,
+        "wer_sem": 0.1028677721670354,
+        "n": 1262
+      },
+      "single_wav2vec2": {
+        "wer_mean": 0.39007869362831116,
+        "wer_sem": 0.014109464492595647,
+        "n": 1262
+      },
+      "oracle": {
+        "wer_mean": 0.23960044980049133,
+        "wer_sem": 0.009744877827899847,
+        "n": 1262
+      },
+      "random": {
+        "wer_mean": 0.5368717908859253,
+        "wer_sem": 0.02804807122843137,
+        "n": 1262
+      },
+      "weighted_random": {
+        "wer_mean": 0.5018078684806824,
+        "wer_sem": 0.02513656659754137,
+        "n": 1262
+      },
+      "weighted_random_weights": {
+        "hubert": 0.25613340735435486,
+        "whisper": 0.2926139235496521,
+        "wav2vec2": 0.45125266909599304
+      },
+      "selection_accuracy_random": {
+        "value": 0.3114104595879556,
+        "n": 1262
+      }
+    }
+  }
+}

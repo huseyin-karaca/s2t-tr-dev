@@ -93,18 +93,21 @@ class ASRFeatureDataset(Dataset):
             self._pq_file = pq.ParquetFile(self.parquet_path)
         return self._pq_file
 
-    def _read_row_group_uncached(self, rg_idx: int) -> Dict[str, list]:
-        """Read the three feature columns of a single row group as Python lists.
+    def _read_row_group_uncached(self, rg_idx: int) -> Dict[str, "pa.ChunkedArray"]:
+        """Read the three feature columns of a single row group as Arrow arrays.
 
-        Returns a dict keyed by model name, where each value is a list
-        of frame-level embedding lists (one entry per row in the group).
+        We deliberately avoid ``.to_pylist()`` here — that would decode
+        every clip in the row group into Python list objects up-front,
+        which inflates memory by ~7-9× compared to the parquet on-disk
+        size (Python float overhead). Instead we keep the Arrow buffers
+        and decode one clip at a time inside :meth:`__getitem__` via
+        ``Scalar.as_py()``. Combined with a moderate ``row_group_size``
+        in preprocess.py, this caps peak RAM to roughly one row group's
+        Arrow footprint.
         """
         cols = [FEATURE_COLUMNS[n] for n in MODEL_NAMES]
         table = self.pq_file.read_row_group(rg_idx, columns=cols)
-        return {
-            n: table[FEATURE_COLUMNS[n]].to_pylist()
-            for n in MODEL_NAMES
-        }
+        return {n: table[FEATURE_COLUMNS[n]] for n in MODEL_NAMES}
 
     def _locate(self, idx: int) -> tuple[int, int]:
         """Find ``(row_group_index, row_in_group)`` for global ``idx``."""
@@ -139,7 +142,10 @@ class ASRFeatureDataset(Dataset):
         hidden_states: Dict[str, torch.Tensor] = {}
         seq_lens: Dict[str, int] = {}
         for name in MODEL_NAMES:
-            emb = np.asarray(rg[name][row], dtype=np.float32)
+            # rg[name] is an Arrow ChunkedArray; indexing returns a
+            # ListScalar, and as_py() decodes only that single clip's
+            # nested list — not the whole row group.
+            emb = np.asarray(rg[name][row].as_py(), dtype=np.float32)
             if emb.ndim != 2:
                 raise ValueError(
                     f"Expected 2D (T, D) embedding for '{name}', got shape {emb.shape}"

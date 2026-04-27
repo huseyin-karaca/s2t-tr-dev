@@ -31,6 +31,7 @@ def process_dataset(
     interim_dir: str = "data/interim",
     processed_dir: str = "data/processed",
     output_name: str = "combined_features_with_transcripts.parquet",
+    row_group_size: int = 256,
 ) -> str:
     """Combine the three interim per-expert parquets for ``dataset_name``.
 
@@ -39,6 +40,11 @@ def process_dataset(
         interim_dir: Root for the per-expert interim parquets.
         processed_dir: Root for the combined output parquet.
         output_name: Filename written under ``processed_dir/{safe_name}/``.
+        row_group_size: Number of clips per Parquet row group. Smaller
+            values keep :class:`src.data.dataset.ASRFeatureDataset`'s
+            per-access memory footprint bounded; ``256`` keeps each
+            row group's Arrow footprint to a couple of GB even for
+            wide encoders like HuBERT-Large.
 
     Returns:
         The absolute path of the written parquet.
@@ -85,8 +91,9 @@ def process_dataset(
 
     os.makedirs(processed_path, exist_ok=True)
     out_path = os.path.join(processed_path, output_name)
-    logger.info("Writing combined parquet to %s", out_path)
-    pq.write_table(combined_table, out_path)
+    logger.info("Writing combined parquet to %s (row_group_size=%d)",
+                out_path, row_group_size)
+    pq.write_table(combined_table, out_path, row_group_size=row_group_size)
     logger.info("Done.")
     return out_path
 
@@ -104,8 +111,12 @@ if __name__ == "__main__":
     parser.add_argument("--output_name", type=str,
                         default="combined_features_with_transcripts.parquet",
                         help="Output filename under processed_dir/{safe_name}/")
+    parser.add_argument("--row_group_size", type=int, default=256,
+                        help="Clips per Parquet row group (smaller = lower "
+                             "peak RAM during dataset access).")
     args = parser.parse_args()
 
     process_dataset(
-        args.dataset, args.interim_dir, args.processed_dir, args.output_name,
+        args.dataset, args.interim_dir, args.processed_dir,
+        args.output_name, args.row_group_size,
     )

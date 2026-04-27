@@ -6,7 +6,9 @@
       "Bash(.venv/bin/python -m src.experiments.synthetic_sweep figure --results /tmp/sweep_smoke/sweep_results.json --output-path /tmp/sweep_smoke/sweep_figure.png)",
       "Bash(.venv/bin/python -c ' *)",
       "Bash(python3 -c ' *)",
-      "Bash(python3 /tmp/gen_notebooks.py)"
+      "Bash(python3 /tmp/gen_notebooks.py)",
+      "Bash(uv run *)",
+      "Bash(uv run python -c ' *)"
     ]
   }
 }

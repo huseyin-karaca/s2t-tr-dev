@@ -41,6 +41,8 @@ Sample run (quick smoke test to verify the pipeline end-to-end):
 import json
 import logging
 import os
+import sys
+import time
 from typing import Optional
 
 import numpy as np
@@ -57,6 +59,7 @@ def _torch_load_full(*args, **kwargs):
     return _orig_torch_load(*args, **kwargs)
 torch.load = _torch_load_full
 from pytorch_lightning.callbacks import (
+    Callback,
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
@@ -82,6 +85,46 @@ MODEL_DIMS = {
     "whisper":  512,   # openai/whisper-base
     "wav2vec2": 1024,   # facebook/wav2vec2-base-960h
 }
+
+
+class EpochSummary(Callback):
+    """One concise log line per epoch — designed for non-tty subprocess output.
+
+    Lightning's default :class:`TQDMProgressBar` falls back to per-refresh
+    line writes when stdout is not a tty (e.g. when ``train.py`` is
+    spawned by an orchestrator like :mod:`src.experiments.main_results`
+    and its output is forwarded into a notebook cell). The result is
+    repeated half-empty ``Validation: 0/?`` lines and duplicated epoch
+    rows. This callback replaces that with a single log line per
+    training epoch, plus a single line at the start/end of each
+    validation pass, which renders identically in a tty and in a
+    captured-stdout context.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._epoch_start: Optional[float] = None
+        self._val_start: Optional[float] = None
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        self._epoch_start = time.time()
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self._epoch_start is None:
+            return
+        m = {k: float(v) for k, v in trainer.callback_metrics.items()}
+        elapsed = time.time() - self._epoch_start
+        logger.info(
+            "Epoch %3d/%d — %.1fs — train_loss=%.4f train_wer=%.4f train_acc=%.4f"
+            "  val_loss=%.4f val_wer=%.4f val_acc=%.4f",
+            trainer.current_epoch + 1, trainer.max_epochs, elapsed,
+            m.get("train/total_loss_epoch", float("nan")),
+            m.get("train/selected_wer_epoch", float("nan")),
+            m.get("train/selection_accuracy_epoch", float("nan")),
+            m.get("val/total_loss", float("nan")),
+            m.get("val/selected_wer", float("nan")),
+            m.get("val/selection_accuracy", float("nan")),
+        )
 
 
 class ASRSelectorModule(pl.LightningModule):
@@ -439,6 +482,7 @@ def train(
     for k, v in param_counts.items():
         logger.info("  %25s: %10d", k, v)
 
+    is_tty = sys.stdout.isatty()
     callbacks = [
         ModelCheckpoint(
             dirpath=os.path.join(log_dir, experiment_name, "checkpoints"),
@@ -455,8 +499,15 @@ def train(
             verbose=True,
         ),
         LearningRateMonitor(logging_interval="step"),
-        TQDMProgressBar(refresh_rate=progress_bar_refresh),
+        EpochSummary(),
     ]
+    # Only add the tqdm bar when stdout is a real terminal. Under
+    # subprocess capture (orchestrators / notebook cells running
+    # ``!uv run python -m ...``) it falls back to per-refresh line
+    # writes that produce duplicated "Validation: 0/?" rows; the
+    # EpochSummary callback above gives clean per-epoch lines instead.
+    if is_tty:
+        callbacks.append(TQDMProgressBar(refresh_rate=progress_bar_refresh))
 
     tb_logger = TensorBoardLogger(save_dir=log_dir, name=experiment_name)
 
@@ -470,6 +521,7 @@ def train(
         precision="16-mixed",
         log_every_n_steps=10,
         deterministic=True,
+        enable_progress_bar=is_tty,
     )
     if limit_batches is not None:
         trainer_kwargs.update(
