@@ -142,21 +142,9 @@ def run(
         _run(_python_module("src.training.train", *train_flags),
              description=f"train method={name}")
 
-        last_ckpt = out_root / name / "checkpoints" / "last.ckpt"
-        test_json = run_dir / "test.json"
-        eval_flags = [
-            "--checkpoint", str(last_ckpt),
-            "--parquet-path", parquet_path,
-            "--split", "test",
-            "--save-json", str(test_json),
-        ]
-        for opt in ("train_ratio", "val_ratio", "max_seq_len",
-                    "batch_size", "num_workers", "seed"):
-            if opt in merged:
-                eval_flags += [f"--{opt.replace('_','-')}", str(merged[opt])]
-        _run(_python_module("src.training.evaluate", *eval_flags),
-             description=f"evaluate method={name}")
-
+        # train.py runs trainer.test on the best checkpoint and writes
+        # test_results.json into the experiment dir, so we just read it.
+        test_json = out_root / name / "test_results.json"
         aggregated["methods"][name] = {
             "config_overrides": {k: v for k, v in method.items() if k != "name"},
             "test": json.loads(test_json.read_text()),

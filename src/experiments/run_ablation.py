@@ -108,22 +108,9 @@ def run(
         _run(_python_module("src.training.train", *train_flags),
              description=f"train variant={name}")
 
-        ckpt_dir = out_root / name / "checkpoints"
-        last_ckpt = ckpt_dir / "last.ckpt"
-        test_json = run_dir / "test.json"
-        eval_flags = [
-            "--checkpoint", str(last_ckpt),
-            "--parquet-path", parquet_path,
-            "--split", "test",
-            "--save-json", str(test_json),
-        ]
-        for opt in ("train_ratio", "val_ratio", "max_seq_len",
-                    "batch_size", "num_workers", "seed"):
-            if opt in merged:
-                eval_flags += [f"--{opt.replace('_','-')}", str(merged[opt])]
-        _run(_python_module("src.training.evaluate", *eval_flags),
-             description=f"evaluate variant={name}")
-
+        # train.py runs trainer.test on the best checkpoint and dumps
+        # test_results.json — read it directly, no second subprocess.
+        test_json = out_root / name / "test_results.json"
         results["variants"][name] = {
             "config_overrides": {k: v for k, v in variant.items() if k != "name"},
             "test": json.loads(test_json.read_text()),

@@ -48,14 +48,18 @@ app = typer.Typer(help="Sweep the synthetic regime-switch experiment over R.")
 
 @dataclass
 class _RunPaths:
-    """Paths produced by a single sweep cell (one R, one architecture)."""
+    """Paths produced by a single sweep cell (one R, one architecture).
+
+    ``test_json`` is the file that ``src.training.train`` writes after
+    its in-fit ``trainer.test`` (on the best checkpoint). The orchestrator
+    just reads it instead of running a second evaluate subprocess.
+    """
     parquet:    Path
     log_dir:    Path
-    test_json:  Path
-    last_ckpt:  Path = field(init=False)
+    test_json:  Path = field(init=False)
 
     def __post_init__(self):
-        self.last_ckpt = self.log_dir / "checkpoints" / "last.ckpt"
+        self.test_json = self.log_dir / "test_results.json"
 
 
 def _run(cmd: List[str], description: str) -> None:
@@ -132,34 +136,6 @@ def _train_router(
         "--log-dir",              str(log_dir.parent),
     )
     _run(cmd, f"train router (arch={arch}, log_dir={log_dir})")
-
-
-def _evaluate_checkpoint(
-    parquet: Path,
-    checkpoint: Path,
-    save_json: Path,
-    max_seq_len: int,
-    batch_size: int,
-    num_workers: int,
-    seed: int,
-    train_ratio: float,
-    val_ratio: float,
-) -> None:
-    """Evaluate a single checkpoint via :mod:`src.training.evaluate`."""
-    cmd = _python_module(
-        "src.training.evaluate",
-        "--checkpoint",   str(checkpoint),
-        "--parquet-path", str(parquet),
-        "--split",        "test",
-        "--train-ratio",  str(train_ratio),
-        "--val-ratio",    str(val_ratio),
-        "--max-seq-len",  str(max_seq_len),
-        "--batch-size",   str(batch_size),
-        "--num-workers",  str(num_workers),
-        "--seed",         str(seed),
-        "--save-json",    str(save_json),
-    )
-    _run(cmd, f"evaluate checkpoint {checkpoint}")
 
 
 def _evaluate_baselines(
@@ -252,12 +228,10 @@ def run(
         hier_paths = _RunPaths(
             parquet=parquet,
             log_dir=cell_dir / "hier",
-            test_json=cell_dir / "hier_test.json",
         )
         mlp_paths = _RunPaths(
             parquet=parquet,
             log_dir=cell_dir / "mlp_pool",
-            test_json=cell_dir / "mlp_pool_test.json",
         )
         baselines_json = cell_dir / "baselines.json"
 
@@ -288,17 +262,9 @@ def run(
                 soft_ce_temperature=soft_ce_temperature,
                 seed=seed,
             )
-            _evaluate_checkpoint(
-                parquet=parquet,
-                checkpoint=paths.last_ckpt,
-                save_json=paths.test_json,
-                max_seq_len=max_seq_len,
-                batch_size=batch_size,
-                num_workers=num_workers,
-                seed=seed,
-                train_ratio=train_ratio,
-                val_ratio=val_ratio,
-            )
+            # train.py writes test_results.json into paths.log_dir after
+            # its in-fit trainer.test on the best checkpoint, so no
+            # second subprocess is needed.
         _evaluate_baselines(
             parquet=parquet,
             save_json=baselines_json,
