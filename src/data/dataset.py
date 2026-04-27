@@ -1,17 +1,32 @@
 """Dataset for the combined ASR features parquet.
 
-Expects a single parquet produced by `src.data.preprocess`, containing:
+Expects a single parquet produced by :mod:`src.data.preprocess`, containing:
     - ground_truth: str
-    - {whisper,hubert,w2v2}_features: list[list[float]]  (variable-length [T, D])
-    - {whisper,hubert,w2v2}_wer: float
+    - {whisper, hubert, w2v2}_features: list[list[float]]  (variable-length [T, D])
+    - {whisper, hubert, w2v2}_wer: float
+
+Memory model:
+    The combined parquet contains three frame-level feature columns whose
+    total in-memory size for AMI/VoxPopuli is tens of gigabytes. Loading
+    the whole table eagerly (e.g. via ``pq.read_table`` or
+    ``datasets.load_dataset``) plus a multi-worker DataLoader fork
+    triggers a copy-on-write blowup that exceeds Colab's RAM. To avoid
+    that, this dataset opens the parquet lazily as a
+    :class:`pq.ParquetFile`, reads only the row-group containing the
+    requested clip on demand, and keeps a one-row-group LRU cache so
+    that consecutive accesses within the same row group amortize the
+    decode cost. Scalar columns (``ground_truth`` and the three
+    ``*_wer`` columns) are eagerly loaded into NumPy arrays since they
+    are tiny.
 """
 
 import logging
+from functools import lru_cache
 from typing import Dict, List
 
 import numpy as np
+import pyarrow.parquet as pq
 import torch
-import pyarrow.parquet as pq  # HF datasets yerine pure pyarrow kullanıyoruz
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
@@ -32,48 +47,109 @@ WER_COLUMNS: Dict[str, str] = {
 
 
 class ASRFeatureDataset(Dataset):
-    """Variable-length frame-level embeddings from three ASR encoders + per-model WER."""
+    """Variable-length frame-level embeddings + per-model WER, lazily loaded."""
 
-    def __init__(self, parquet_path: str, max_seq_len: int = 2000):
+    def __init__(self, parquet_path: str, max_seq_len: int = 2000, cache_size: int = 2):
         """Args:
-            parquet_path: Path to the unified `combined_features.parquet`.
+            parquet_path: Path to the unified combined parquet.
             max_seq_len: Frame sequences longer than this are truncated.
+            cache_size: Number of row groups to keep decoded in memory.
+                One is enough for sequential access; two helps when the
+                DataLoader prefetches across a row-group boundary.
         """
+        self.parquet_path = parquet_path
         self.max_seq_len = max_seq_len
-        
-        logger.info("Reading parquet metadata from %s ...", parquet_path)
-        # memory_map=True sayesinde dosya RAM'i işgal etmez, diskten doğrudan eşlenir.
-        self.table = pq.read_table(parquet_path, memory_map=True)
-        logger.info("Loaded %d samples instantly using pure PyArrow.", self.table.num_rows)
+
+        self._pq_file: pq.ParquetFile | None = None
+        meta = pq.read_metadata(parquet_path)
+        self.num_rows: int = meta.num_rows
+        self.num_row_groups: int = meta.num_row_groups
+        self.row_group_offsets: List[int] = []
+        offset = 0
+        for rg in range(self.num_row_groups):
+            self.row_group_offsets.append(offset)
+            offset += meta.row_group(rg).num_rows
+        self.row_group_offsets.append(offset)
+
+        wer_cols = [WER_COLUMNS[n] for n in MODEL_NAMES]
+        wer_table = pq.read_table(parquet_path, columns=wer_cols)
+        self.wer_matrix = np.stack(
+            [wer_table[c].to_numpy().astype(np.float32) for c in wer_cols],
+            axis=-1,
+        )
+
+        self._read_row_group = lru_cache(maxsize=cache_size)(self._read_row_group_uncached)
+
+        logger.info(
+            "Opened parquet %s (rows=%d, row_groups=%d) — features stay on disk, "
+            "row-group cache size=%d.",
+            parquet_path, self.num_rows, self.num_row_groups, cache_size,
+        )
+
+    @property
+    def pq_file(self) -> pq.ParquetFile:
+        """Lazy ParquetFile handle; opened in the worker process."""
+        if self._pq_file is None:
+            self._pq_file = pq.ParquetFile(self.parquet_path)
+        return self._pq_file
+
+    def _read_row_group_uncached(self, rg_idx: int) -> Dict[str, list]:
+        """Read the three feature columns of a single row group as Python lists.
+
+        Returns a dict keyed by model name, where each value is a list
+        of frame-level embedding lists (one entry per row in the group).
+        """
+        cols = [FEATURE_COLUMNS[n] for n in MODEL_NAMES]
+        table = self.pq_file.read_row_group(rg_idx, columns=cols)
+        return {
+            n: table[FEATURE_COLUMNS[n]].to_pylist()
+            for n in MODEL_NAMES
+        }
+
+    def _locate(self, idx: int) -> tuple[int, int]:
+        """Find ``(row_group_index, row_in_group)`` for global ``idx``."""
+        if idx < 0 or idx >= self.num_rows:
+            raise IndexError(idx)
+        lo, hi = 0, self.num_row_groups
+        while lo + 1 < hi:
+            mid = (lo + hi) // 2
+            if self.row_group_offsets[mid] <= idx:
+                lo = mid
+            else:
+                hi = mid
+        return lo, idx - self.row_group_offsets[lo]
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_pq_file"] = None
+        state.pop("_read_row_group", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._read_row_group = lru_cache(maxsize=2)(self._read_row_group_uncached)
 
     def __len__(self) -> int:
-        return self.table.num_rows
+        return self.num_rows
 
     def __getitem__(self, idx: int) -> dict:
-        """Returns a dict with per-model hidden states, seq lengths, and WER scores."""
+        rg_idx, row = self._locate(idx)
+        rg = self._read_row_group(rg_idx)
+
         hidden_states: Dict[str, torch.Tensor] = {}
         seq_lens: Dict[str, int] = {}
-        
         for name in MODEL_NAMES:
-            # Table üzerinden sadece o sütunun o satırına (idx) ulaşıp Python listesine (.as_py()) çeviriyoruz.
-            emb_list = self.table[FEATURE_COLUMNS[name]][idx].as_py()
-            emb = np.asarray(emb_list, dtype=np.float32)
-            
+            emb = np.asarray(rg[name][row], dtype=np.float32)
             if emb.ndim != 2:
                 raise ValueError(
                     f"Expected 2D (T, D) embedding for '{name}', got shape {emb.shape}"
                 )
             if emb.shape[0] > self.max_seq_len:
                 emb = emb[: self.max_seq_len]
-                
             hidden_states[name] = torch.from_numpy(emb)
             seq_lens[name] = emb.shape[0]
 
-        # WER skorlarını aynı mantıkla hızlıca çekiyoruz
-        wer_scores = torch.tensor(
-            [float(self.table[WER_COLUMNS[n]][idx].as_py()) for n in MODEL_NAMES],
-            dtype=torch.float32,
-        )
+        wer_scores = torch.from_numpy(self.wer_matrix[idx])
 
         return {
             "hidden_states": hidden_states,
@@ -82,18 +158,18 @@ class ASRFeatureDataset(Dataset):
             "sample_id": idx,
         }
 
-# collate_fn tamamen aynı kalıyor...
+
 def collate_fn(batch: List[dict]) -> dict:
     """Pad each model's frame sequence independently and build attention masks.
 
     Args:
-        batch: List of dicts from `ASRFeatureDataset.__getitem__`.
+        batch: List of dicts from :meth:`ASRFeatureDataset.__getitem__`.
 
     Returns:
         Dict with:
             hidden_states: Dict[model_name, (B, T_max_k, D_k)].
             attention_masks: Dict[model_name, (B, T_max_k) bool], True where valid.
-            wer_scores: (B, n_models) float tensor, in MODEL_NAMES order.
+            wer_scores: (B, n_models) float tensor in :data:`MODEL_NAMES` order.
             sample_ids: List of sample identifiers.
     """
     batch_size = len(batch)

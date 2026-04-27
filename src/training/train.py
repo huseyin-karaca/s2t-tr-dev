@@ -484,10 +484,23 @@ def train(
     trainer.fit(lightning_model, train_loader, val_loader)
 
     logger.info("Running test evaluation...")
-    trainer.test(lightning_model, test_loader, ckpt_path="best")
+    test_metrics_list = trainer.test(lightning_model, test_loader, ckpt_path="best")
 
     results_dir = os.path.join(log_dir, experiment_name)
     os.makedirs(results_dir, exist_ok=True)
+
+    # Persist the test metrics so orchestrators (run_ablation, main_results,
+    # synthetic_sweep) do not need a second evaluate.py subprocess to obtain
+    # them. Lightning runs trainer.test on the *best* checkpoint, so this
+    # JSON reflects the best-on-val model rather than the last one.
+    test_results = test_metrics_list[0] if test_metrics_list else {}
+    flat_test = {
+        k.replace("test/", ""): float(v) for k, v in test_results.items()
+    }
+    test_json_path = os.path.join(results_dir, "test_results.json")
+    with open(test_json_path, "w") as f:
+        json.dump({"split": "test", **flat_test}, f, indent=2)
+    logger.info("Wrote test results to %s", test_json_path)
     config_snapshot = {
         "parquet_path": parquet_path,
         "train_ratio": train_ratio, "val_ratio": val_ratio,
