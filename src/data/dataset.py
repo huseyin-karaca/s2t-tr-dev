@@ -11,7 +11,7 @@ from typing import Dict, List
 
 import numpy as np
 import torch
-from datasets import load_dataset
+import pyarrow.parquet as pq  # HF datasets yerine pure pyarrow kullanıyoruz
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
@@ -40,31 +40,38 @@ class ASRFeatureDataset(Dataset):
             max_seq_len: Frame sequences longer than this are truncated.
         """
         self.max_seq_len = max_seq_len
-        self.ds = load_dataset("parquet", data_files=parquet_path, split="train")
-        logger.info("Loaded %d samples from %s", len(self.ds), parquet_path)
+        
+        logger.info("Reading parquet metadata from %s ...", parquet_path)
+        # memory_map=True sayesinde dosya RAM'i işgal etmez, diskten doğrudan eşlenir.
+        self.table = pq.read_table(parquet_path, memory_map=True)
+        logger.info("Loaded %d samples instantly using pure PyArrow.", self.table.num_rows)
 
     def __len__(self) -> int:
-        return len(self.ds)
+        return self.table.num_rows
 
     def __getitem__(self, idx: int) -> dict:
         """Returns a dict with per-model hidden states, seq lengths, and WER scores."""
-        row = self.ds[idx]
-
         hidden_states: Dict[str, torch.Tensor] = {}
         seq_lens: Dict[str, int] = {}
+        
         for name in MODEL_NAMES:
-            emb = np.asarray(row[FEATURE_COLUMNS[name]], dtype=np.float32)
+            # Table üzerinden sadece o sütunun o satırına (idx) ulaşıp Python listesine (.as_py()) çeviriyoruz.
+            emb_list = self.table[FEATURE_COLUMNS[name]][idx].as_py()
+            emb = np.asarray(emb_list, dtype=np.float32)
+            
             if emb.ndim != 2:
                 raise ValueError(
                     f"Expected 2D (T, D) embedding for '{name}', got shape {emb.shape}"
                 )
             if emb.shape[0] > self.max_seq_len:
                 emb = emb[: self.max_seq_len]
+                
             hidden_states[name] = torch.from_numpy(emb)
             seq_lens[name] = emb.shape[0]
 
+        # WER skorlarını aynı mantıkla hızlıca çekiyoruz
         wer_scores = torch.tensor(
-            [float(row[WER_COLUMNS[n]]) for n in MODEL_NAMES],
+            [float(self.table[WER_COLUMNS[n]][idx].as_py()) for n in MODEL_NAMES],
             dtype=torch.float32,
         )
 
@@ -75,7 +82,7 @@ class ASRFeatureDataset(Dataset):
             "sample_id": idx,
         }
 
-
+# collate_fn tamamen aynı kalıyor...
 def collate_fn(batch: List[dict]) -> dict:
     """Pad each model's frame sequence independently and build attention masks.
 

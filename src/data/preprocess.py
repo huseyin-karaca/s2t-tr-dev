@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 WHISPER_MODEL = "openai_whisper-base"
 HUBERT_MODEL = "facebook_hubert-large-ls960-ft"
-W2V2_MODEL = "facebook_wav2vec2-base-960h"
+W2V2_MODEL = "facebook_wav2vec2-large-robust-ft-swbd-300h"
 
 
 def process_dataset(
