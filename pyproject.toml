@@ -18,6 +18,7 @@ classifiers = [
 dependencies = [
     "datasets<4.0.0",
     "dotenv>=0.9.9",
+    "duckdb>=1.5.2",
     "evaluate>=0.4.6",
     "ipython",
     "jiwer>=4.0.0",

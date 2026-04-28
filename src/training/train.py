@@ -12,30 +12,7 @@ Loss:
         with the lowest WER for each clip.
     Auxiliary: Cross-entropy on the hard best-model label (with label smoothing).
         Aids early convergence by providing a stronger gradient signal.
-
-Full training run:
-    python -m src.training.train \
-        --parquet-path data/processed/edinburghcstr_ami/combined_features.parquet \
-        --batch-size 8 \
-        --max-epochs 50 \
-        --experiment-name ami_full
-
-MLP-pool baseline run:
-    python -m src.training.train \
-        --arch mlp_pool \
-        --parquet-path data/processed/edinburghcstr_ami/combined_features.parquet \
-        --batch-size 8 \
-        --max-epochs 50 \
-        --experiment-name ami_full_mlp_pool
-
-Sample run (quick smoke test to verify the pipeline end-to-end):
-    python -m src.training.train \
-        --parquet-path data/processed/edinburghcstr_ami/combined_features.parquet \
-        --batch-size 2 \
-        --max-epochs 1 \
-        --limit-batches 4 \
-        --num-workers 0 \
-        --experiment-name smoke_test
+        Supports class-balancing to prevent shadowing of minority experts (e.g., HuBERT).
 """
 
 import json
@@ -86,20 +63,11 @@ MODEL_DIMS = {
     "wav2vec2": 1024,   # facebook/wav2vec2-base-960h
 }
 
+# Optimize for NVIDIA Blackwell / Tensor Cores (TF32 activation)
+torch.set_float32_matmul_precision('medium')
 
 class EpochSummary(Callback):
-    """One concise log line per epoch — designed for non-tty subprocess output.
-
-    Lightning's default :class:`TQDMProgressBar` falls back to per-refresh
-    line writes when stdout is not a tty (e.g. when ``train.py`` is
-    spawned by an orchestrator like :mod:`src.experiments.main_results`
-    and its output is forwarded into a notebook cell). The result is
-    repeated half-empty ``Validation: 0/?`` lines and duplicated epoch
-    rows. This callback replaces that with a single log line per
-    training epoch, plus a single line at the start/end of each
-    validation pass, which renders identically in a tty and in a
-    captured-stdout context.
-    """
+    """One concise log line per epoch — designed for non-tty subprocess output."""
 
     def __init__(self):
         super().__init__()
@@ -153,37 +121,8 @@ class ASRSelectorModule(pl.LightningModule):
         soft_ce_weight: float = 0.0,
         soft_ce_temperature: float = 0.1,
         label_smoothing: float = 0.1,
+        class_balanced_loss: bool = False,
     ):
-        """Args:
-            arch: Routing architecture; one of ``"hierarchical_transformer"``
-                (default, the proposed model in
-                :class:`src.models.selector.ASRModelSelector`) or
-                ``"mlp_pool"`` (mean-pool baseline in
-                :class:`src.models.mlp_pool.MLPPoolSelector`).
-            d_model: Shared transformer hidden dimension (hierarchical only).
-            n_heads: Number of attention heads (hierarchical only).
-            stage1_layers: Transformer layers in Stage 1 (hierarchical only).
-            stage2_layers: Transformer layers in Stage 2 (hierarchical only).
-            ffn_dim: Feed-forward dimension (hierarchical only).
-            dropout: Dropout probability (both architectures).
-            use_cross_attention_bridge: Whether to use cross-attention
-                bridge (hierarchical only).
-            share_stage1_weights: Whether Stage 1 weights are shared across
-                models (hierarchical only).
-            max_seq_len: Maximum sequence length for positional encoding
-                (hierarchical only).
-            mlp_hidden: Hidden width of each MLP layer (mlp_pool only).
-            mlp_layers: Number of hidden layers in the MLP (mlp_pool only).
-            learning_rate: Peak learning rate for AdamW.
-            weight_decay: Weight decay for AdamW.
-            warmup_steps: Linear warmup steps.
-            total_steps: Total training steps for cosine annealing.
-            primary_weight: Weight of the weighted-WER primary loss.
-            aux_ce_weight: Weight of the auxiliary hard-label CE loss.
-            soft_ce_weight: Weight of the auxiliary soft-target CE loss.
-            soft_ce_temperature: Temperature for the soft CE target.
-            label_smoothing: Label smoothing for the hard CE loss.
-        """
         super().__init__()
         self.save_hyperparameters()
 
@@ -225,6 +164,17 @@ class ASRSelectorModule(pl.LightningModule):
         self.soft_ce_weight = soft_ce_weight
         self.soft_ce_temperature = soft_ce_temperature
         self.label_smoothing = label_smoothing
+        self.class_balanced_loss = class_balanced_loss
+
+        if self.class_balanced_loss:
+            # Oracle Dataset Priors: Hubert: ~32.3%, Whisper: ~44.4%, Wav2Vec2: ~23.3%
+            # Inverse frequencies to boost overshadowed models
+            weights = torch.tensor([1.0/0.323, 1.0/0.444, 1.0/0.233], dtype=torch.float32)
+            # Normalize to preserve overall learning rate scale (sum = num_classes)
+            weights = weights / weights.sum() * 3.0
+            self.register_buffer("class_weights", weights)
+        else:
+            self.class_weights = None
 
     def forward(
         self,
@@ -243,13 +193,16 @@ class ASRSelectorModule(pl.LightningModule):
         primary_loss = weighted_wer.mean()
 
         best_model_idx = wer_scores.argmin(dim=-1)
+        
+        # Hard CE with optional class balancing to prevent mode collapse
         hard_ce = F.cross_entropy(
             torch.log(probs + 1e-8),
             best_model_idx,
+            weight=self.class_weights,
             label_smoothing=self.label_smoothing,
         )
 
-        # Soft CE: target distribution is softmax(-wer / T) — carries WER magnitudes.
+        # Soft CE: target distribution is softmax(-wer / T)
         soft_target = F.softmax(-wer_scores / self.soft_ce_temperature, dim=-1)
         soft_ce = -(soft_target * torch.log(probs + 1e-8)).sum(dim=-1).mean()
 
@@ -353,8 +306,8 @@ def train(
     train_ratio: float = typer.Option(0.8, "--train-ratio"),
     val_ratio: float = typer.Option(0.1, "--val-ratio"),
     max_seq_len: int = typer.Option(2000, "--max-seq-len"),
-    batch_size: int = typer.Option(4, "--batch-size", "-b"),
-    num_workers: int = typer.Option(4, "--num-workers"),
+    batch_size: int = typer.Option(128, "--batch-size", "-b"),
+    num_workers: int = typer.Option(8, "--num-workers"),
     # Model
     arch: str = typer.Option(
         ARCH_HIERARCHICAL, "--arch",
@@ -380,28 +333,40 @@ def train(
         help="Number of hidden layers in the MLP (used when --arch mlp_pool).",
     ),
     # Training
-    learning_rate: float = typer.Option(1e-4, "--learning-rate", "--lr"),
+    learning_rate: float = typer.Option(2e-4, "--learning-rate", "--lr"),
     weight_decay: float = typer.Option(1e-2, "--weight-decay"),
     warmup_steps: int = typer.Option(200, "--warmup-steps"),
     max_epochs: int = typer.Option(50, "--max-epochs"),
     primary_weight: float = typer.Option(
         1.0, "--primary-weight",
-        help="Weight of weighted-WER primary loss (set 0 for classification-only).",
+        help="Weight of weighted-WER primary loss.",
     ),
     aux_ce_weight: float = typer.Option(
         0.3, "--aux-ce-weight",
         help="Weight of hard-label CE (argmin WER) auxiliary loss.",
     ),
     soft_ce_weight: float = typer.Option(
-        0.0, "--soft-ce-weight",
+        0.5, "--soft-ce-weight",
         help="Weight of soft CE against softmax(-wer/T) target distribution.",
     ),
     soft_ce_temperature: float = typer.Option(
-        0.1, "--soft-ce-temperature",
+        0.5, "--soft-ce-temperature",
         help="Temperature for soft CE target; lower = sharper (closer to hard CE).",
     ),
     label_smoothing: float = typer.Option(0.1, "--label-smoothing"),
+    class_balanced_loss: bool = typer.Option(
+        False, "--class-balanced-loss",
+        help="Use inverse frequency weighting to prevent mode collapse on minority models.",
+    ),
     gradient_clip_val: float = typer.Option(1.0, "--gradient-clip-val"),
+    early_stopping_patience: int = typer.Option(
+        5, "--early-stopping-patience",
+        help="Number of validation epochs with no improvement before stopping.",
+    ),
+    deterministic: bool = typer.Option(
+        False, "--deterministic",
+        help="Set True for reproducibility, False for maximum Tensor Core speed.",
+    ),
     seed: int = typer.Option(42, "--seed"),
     limit_batches: Optional[int] = typer.Option(
         None, "--limit-batches",
@@ -475,6 +440,7 @@ def train(
         soft_ce_weight=soft_ce_weight,
         soft_ce_temperature=soft_ce_temperature,
         label_smoothing=label_smoothing,
+        class_balanced_loss=class_balanced_loss,
     )
 
     param_counts = lightning_model.model.count_parameters()
@@ -494,18 +460,14 @@ def train(
         ),
         EarlyStopping(
             monitor="val/selected_wer",
-            patience=10,
+            patience=early_stopping_patience,
             mode="min",
             verbose=True,
         ),
         LearningRateMonitor(logging_interval="step"),
         EpochSummary(),
     ]
-    # Only add the tqdm bar when stdout is a real terminal. Under
-    # subprocess capture (orchestrators / notebook cells running
-    # ``!uv run python -m ...``) it falls back to per-refresh line
-    # writes that produce duplicated "Validation: 0/?" rows; the
-    # EpochSummary callback above gives clean per-epoch lines instead.
+    
     if is_tty:
         callbacks.append(TQDMProgressBar(refresh_rate=progress_bar_refresh))
 
@@ -520,7 +482,7 @@ def train(
         devices=1,
         precision="16-mixed",
         log_every_n_steps=10,
-        deterministic=True,
+        deterministic=deterministic,
         enable_progress_bar=is_tty,
     )
     if limit_batches is not None:
@@ -541,10 +503,6 @@ def train(
     results_dir = os.path.join(log_dir, experiment_name)
     os.makedirs(results_dir, exist_ok=True)
 
-    # Persist the test metrics so orchestrators (run_ablation, main_results,
-    # synthetic_sweep) do not need a second evaluate.py subprocess to obtain
-    # them. Lightning runs trainer.test on the *best* checkpoint, so this
-    # JSON reflects the best-on-val model rather than the last one.
     test_results = test_metrics_list[0] if test_metrics_list else {}
     flat_test = {
         k.replace("test/", ""): float(v) for k, v in test_results.items()
@@ -553,6 +511,8 @@ def train(
     with open(test_json_path, "w") as f:
         json.dump({"split": "test", **flat_test}, f, indent=2)
     logger.info("Wrote test results to %s", test_json_path)
+    
+    # Updated config snapshot for Single Source of Truth
     config_snapshot = {
         "parquet_path": parquet_path,
         "train_ratio": train_ratio, "val_ratio": val_ratio,
@@ -572,6 +532,9 @@ def train(
         "soft_ce_weight": soft_ce_weight,
         "soft_ce_temperature": soft_ce_temperature,
         "label_smoothing": label_smoothing,
+        "class_balanced_loss": class_balanced_loss,
+        "early_stopping_patience": early_stopping_patience,
+        "deterministic": deterministic,
         "gradient_clip_val": gradient_clip_val, "seed": seed,
         "limit_batches": limit_batches,
         "experiment_name": experiment_name, "log_dir": log_dir,
