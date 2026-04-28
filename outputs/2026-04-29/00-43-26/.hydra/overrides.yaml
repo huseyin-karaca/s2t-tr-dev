@@ -1,0 +1,3 @@
+- pipeline=main_results_ami_v2
+- pipeline.shared.max_epochs=1
+- +pipeline.shared.limit_batches=1
