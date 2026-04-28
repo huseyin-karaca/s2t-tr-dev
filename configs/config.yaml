@@ -10,6 +10,32 @@ max_seq_len: 2000
 batch_size: 128
 num_workers: 0
 
+# Parquet loading strategy.
+#   eager_load:             if True, decode the entire feature parquet into
+#                           per-expert flat numpy buffers + offsets at startup
+#                           and serve every batch from RAM (no per-batch
+#                           parquet decode). Recommended on hosts with
+#                           enough system RAM (~40 GB for AMI). Multi-worker
+#                           DataLoaders share the buffers via fork+COW.
+#                           Set false on tight-RAM machines to fall back to
+#                           the lazy row-group reader.
+#   auto_rechunk:           if True, transparently rewrite the input parquet
+#                           with small row groups when needed (fixes Colab
+#                           DataLoader OOMs caused by single-row-group
+#                           inputs). Also bounds peak RAM during the
+#                           eager-mode streaming decode. Cached on local
+#                           disk after first run.
+#   target_row_group_size:  rows per row group in the rechunked cache.
+#   parquet_cache_dir:      where to put the rechunked cache. null => use
+#                           $S2T_PARQUET_CACHE or $TMPDIR/s2t-tr-dev-cache.
+#   row_group_cache_size:   per-worker LRU cache for lazy mode. null =>
+#                           sensible default.
+eager_load: false
+auto_rechunk: true
+target_row_group_size: 256
+parquet_cache_dir: null
+row_group_cache_size: null
+
 # Model
 arch: "hierarchical_transformer"
 d_model: 256

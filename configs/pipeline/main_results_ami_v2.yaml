@@ -4,8 +4,8 @@ shared:
   train_ratio: 0.8
   val_ratio: 0.1
   max_seq_len: 2000
-  batch_size: 1024
-  num_workers: 16
+  batch_size: 128
+  num_workers: 4
   max_epochs: 50
   learning_rate: 2e-4
   primary_weight: 1.0
@@ -15,6 +15,11 @@ shared:
   class_balanced_loss: true
   seed: 42
   precision: "bf16-mixed" # Added for high end GPUs
+  # Blackwell hosts have plenty of system RAM; load the whole feature
+  # parquet into per-expert flat numpy buffers once at startup so every
+  # batch is just an in-memory slice. Eliminates per-batch parquet
+  # decode and lets DataLoader workers share data via fork+COW.
+  eager_load: true
 methods:
   - name: "mlp_pool"
     arch: "mlp_pool"

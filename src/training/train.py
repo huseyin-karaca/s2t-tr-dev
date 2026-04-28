@@ -307,6 +307,11 @@ def train(cfg: DictConfig):
     full_dataset = ASRFeatureDataset(
         parquet_path=cfg.parquet_path,
         max_seq_len=cfg.max_seq_len,
+        auto_rechunk=cfg.get("auto_rechunk", True),
+        target_row_group_size=cfg.get("target_row_group_size", 256),
+        cache_dir=cfg.get("parquet_cache_dir", None),
+        cache_size=cfg.get("row_group_cache_size", None),
+        eager_load=cfg.get("eager_load", False),
     )
 
     n_total = len(full_dataset)
