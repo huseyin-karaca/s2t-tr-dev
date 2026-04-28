@@ -131,14 +131,19 @@ class ASRFeatureDataset(Dataset):
                 a memory estimate is logged after loading.
         """
         self.source_parquet_path = str(parquet_path)
-        self.parquet_path = ensure_lazy_parquet(
-            parquet_path,
-            target_row_group_size=target_row_group_size,
-            cache_dir=cache_dir,
-            auto_rechunk=auto_rechunk,
-        )
-        self.max_seq_len = max_seq_len
         self.eager_load = bool(eager_load)
+        
+        if self.eager_load:
+            self.parquet_path = self.source_parquet_path
+        else:
+            self.parquet_path = ensure_lazy_parquet(
+                parquet_path,
+                target_row_group_size=target_row_group_size,
+                cache_dir=cache_dir,
+                auto_rechunk=auto_rechunk,
+            )
+            
+        self.max_seq_len = max_seq_len
 
         self._pq_file: Optional[pq.ParquetFile] = None
         meta = pq.read_metadata(self.parquet_path)
