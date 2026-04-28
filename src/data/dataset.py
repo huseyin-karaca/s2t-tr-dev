@@ -138,6 +138,7 @@ class ASRFeatureDataset(Dataset):
             auto_rechunk=auto_rechunk,
         )
         self.max_seq_len = max_seq_len
+        self.eager_load = bool(eager_load)
 
         self._pq_file: Optional[pq.ParquetFile] = None
         meta = pq.read_metadata(self.parquet_path)
@@ -159,16 +160,40 @@ class ASRFeatureDataset(Dataset):
             axis=-1,
         )
 
-        self.eager_load = bool(eager_load)
-        self._eager_buffers: Dict[str, np.ndarray] = {}
-        self._eager_offsets: Dict[str, np.ndarray] = {}
-
         if self.eager_load:
-            self._materialize_eager()
-
-        self._read_row_group = lru_cache(maxsize=self._cache_size)(
-            self._read_row_group_uncached
-        )
+            logger.info("Eager loading full parquet into flat float16 numpy buffers...")
+            table = pq.read_table(self.parquet_path, columns=[FEATURE_COLUMNS[n] for n in MODEL_NAMES])
+            
+            self._flat_buffers: Dict[str, np.ndarray] = {}
+            self._frame_offsets: Dict[str, np.ndarray] = {}
+            self._model_dims: Dict[str, int] = {}
+            
+            for name in MODEL_NAMES:
+                col_name = FEATURE_COLUMNS[name]
+                chunked_arr = table[col_name].combine_chunks()
+                
+                # Extract PyArrow buffers
+                outer_offsets = chunked_arr.offsets.to_numpy()
+                inner_arr = chunked_arr.values
+                inner_offsets = inner_arr.offsets.to_numpy()
+                
+                # Assume all frames have the same D
+                D = inner_offsets[1] - inner_offsets[0]
+                
+                # Get raw floats and cast to float16 to save memory
+                flat_floats = inner_arr.values.to_numpy(zero_copy_only=False).astype(np.float16)
+                
+                self._flat_buffers[name] = flat_floats
+                self._frame_offsets[name] = outer_offsets
+                self._model_dims[name] = D
+                
+            logger.info("Eager load complete. Flat buffer size per model: ~%.1f GB", 
+                        len(flat_floats) * 2 / (1024**3))
+            self._pq_file = None
+        else:
+            self._read_row_group = lru_cache(maxsize=self._cache_size)(
+                self._read_row_group_uncached
+            )
 
         max_rg = (max(meta.row_group(i).num_rows for i in range(self.num_row_groups))
                   if self.num_row_groups else 0)
@@ -184,110 +209,6 @@ class ASRFeatureDataset(Dataset):
                 "Note: served from rechunked cache. Original was %s.",
                 self.source_parquet_path,
             )
-
-    def _materialize_eager(self) -> None:
-        """Stream-decode the parquet into flat numpy buffers, one per expert.
-
-        We deliberately produce *one* contiguous ``np.float32`` array per
-        expert rather than a list of per-clip arrays. Three reasons:
-
-        1. **Fork+COW friendliness.** A single big numpy allocation
-           has its refcount header in a separate page from the data.
-           DataLoader workers fork() and read from the data pages
-           without ever dirtying them, so all workers share the same
-           physical RAM.
-        2. **No Python object overhead.** Each clip is just an
-           ``[offsets[i]:offsets[i+1]]`` view, not a wrapped Python
-           object, so we pay 4 bytes/frame instead of 4 + ~30 bytes
-           of CPython float overhead.
-        3. **Cache-friendly slicing.** Slicing into a contiguous buffer
-           is a single ``memcpy`` rather than a scatter from many
-           small allocations.
-
-        Decoding is done one row-group at a time so the *peak* RAM
-        during construction is bounded (one row group's Arrow buffers
-        + the partial output buffer), not the full table size.
-        """
-        feat_cols = [FEATURE_COLUMNS[n] for n in MODEL_NAMES]
-        pf = pq.ParquetFile(self.parquet_path)
-
-        # First pass: per-clip lengths, so we can pre-allocate the flat buffer.
-        lengths: Dict[str, np.ndarray] = {n: np.empty(self.num_rows, dtype=np.int64)
-                                          for n in MODEL_NAMES}
-        dims: Dict[str, int] = {}
-        clip_idx = 0
-        for batch in pf.iter_batches(columns=feat_cols, batch_size=256):
-            n_in_batch = batch.num_rows
-            for name in MODEL_NAMES:
-                col = batch.column(FEATURE_COLUMNS[name])
-                for i in range(n_in_batch):
-                    arr = col[i].as_py()
-                    if not arr:
-                        T = 0
-                        D = dims.get(name, 0)
-                    else:
-                        T = min(len(arr), self.max_seq_len)
-                        D = len(arr[0])
-                    if name not in dims:
-                        dims[name] = D
-                    elif D != 0 and D != dims[name]:
-                        raise ValueError(
-                            f"Inconsistent feature dim for '{name}': "
-                            f"row {clip_idx + i} has D={D}, expected D={dims[name]}."
-                        )
-                    lengths[name][clip_idx + i] = T
-            clip_idx += n_in_batch
-
-        offsets: Dict[str, np.ndarray] = {}
-        buffers: Dict[str, np.ndarray] = {}
-        total_bytes = 0
-        for name in MODEL_NAMES:
-            offs = np.empty(self.num_rows + 1, dtype=np.int64)
-            offs[0] = 0
-            np.cumsum(lengths[name], out=offs[1:])
-            offsets[name] = offs
-            total_T = int(offs[-1])
-            D = dims[name]
-            buffers[name] = np.empty((total_T, D), dtype=np.float32)
-            total_bytes += buffers[name].nbytes
-
-        logger.info(
-            "Eager-load: allocating %.2f GB across %d experts (max_seq_len=%d).",
-            total_bytes / 1e9, len(MODEL_NAMES), self.max_seq_len,
-        )
-
-        # Second pass: fill the flat buffers.
-        clip_idx = 0
-        for batch in pf.iter_batches(columns=feat_cols, batch_size=256):
-            n_in_batch = batch.num_rows
-            for name in MODEL_NAMES:
-                col = batch.column(FEATURE_COLUMNS[name])
-                buf = buffers[name]
-                offs = offsets[name]
-                for i in range(n_in_batch):
-                    raw = col[i].as_py()
-                    T = int(offs[clip_idx + i + 1] - offs[clip_idx + i])
-                    if T == 0:
-                        continue
-                    arr = np.asarray(raw[:T], dtype=np.float32)
-                    if arr.ndim != 2:
-                        raise ValueError(
-                            f"Expected 2D (T, D) embedding for '{name}', "
-                            f"got shape {arr.shape}"
-                        )
-                    buf[offs[clip_idx + i]:offs[clip_idx + i + 1]] = arr
-            clip_idx += n_in_batch
-
-        self._eager_buffers = buffers
-        self._eager_offsets = offsets
-
-        # Sanity logging
-        total_frames = {n: int(offsets[n][-1]) for n in MODEL_NAMES}
-        logger.info(
-            "Eager-load complete: %s frames; resident size %.2f GB.",
-            ", ".join(f"{n}={total_frames[n]}" for n in MODEL_NAMES),
-            total_bytes / 1e9,
-        )
 
     @property
     def pq_file(self) -> pq.ParquetFile:
@@ -327,64 +248,58 @@ class ASRFeatureDataset(Dataset):
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        state["_pq_file"] = None
-        state.pop("_read_row_group", None)
+        if not self.eager_load:
+            state["_pq_file"] = None
+            state.pop("_read_row_group", None)
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        cache_size = self.__dict__.get("_cache_size", DEFAULT_ROW_GROUP_CACHE_SIZE)
-        self._read_row_group = lru_cache(maxsize=cache_size)(
-            self._read_row_group_uncached
-        )
+        if not self.eager_load:
+            cache_size = self.__dict__.get("_cache_size", DEFAULT_ROW_GROUP_CACHE_SIZE)
+            self._read_row_group = lru_cache(maxsize=cache_size)(
+                self._read_row_group_uncached
+            )
 
     def __len__(self) -> int:
         return self.num_rows
 
-    def _get_eager(self, idx: int) -> dict:
-        """O(1) slice into pre-loaded flat buffers."""
-        hidden_states: Dict[str, torch.Tensor] = {}
-        seq_lens: Dict[str, int] = {}
-        for name in MODEL_NAMES:
-            offs = self._eager_offsets[name]
-            start = int(offs[idx])
-            end = int(offs[idx + 1])
-            # ``torch.from_numpy`` shares memory with the numpy buffer.
-            # The downstream ``pad_sequence`` in ``collate_fn`` will copy
-            # this view into a fresh padded tensor anyway, so we don't
-            # need a defensive copy here.
-            emb = self._eager_buffers[name][start:end]
-            hidden_states[name] = torch.from_numpy(emb)
-            seq_lens[name] = end - start
-        return {
-            "hidden_states": hidden_states,
-            "seq_lens": seq_lens,
-            "wer_scores": torch.from_numpy(self.wer_matrix[idx]),
-            "sample_id": idx,
-        }
-
     def __getitem__(self, idx: int) -> dict:
-        if self.eager_load:
-            return self._get_eager(idx)
-
-        rg_idx, row = self._locate(idx)
-        rg = self._read_row_group(rg_idx)
-
         hidden_states: Dict[str, torch.Tensor] = {}
         seq_lens: Dict[str, int] = {}
-        for name in MODEL_NAMES:
-            # rg[name] is an Arrow ChunkedArray; indexing returns a
-            # ListScalar, and as_py() decodes only that single clip's
-            # nested list — not the whole row group.
-            emb = np.asarray(rg[name][row].as_py(), dtype=np.float32)
-            if emb.ndim != 2:
-                raise ValueError(
-                    f"Expected 2D (T, D) embedding for '{name}', got shape {emb.shape}"
-                )
-            if emb.shape[0] > self.max_seq_len:
-                emb = emb[: self.max_seq_len]
-            hidden_states[name] = torch.from_numpy(emb)
-            seq_lens[name] = emb.shape[0]
+        
+        if self.eager_load:
+            for name in MODEL_NAMES:
+                start_frame = self._frame_offsets[name][idx]
+                end_frame = self._frame_offsets[name][idx+1]
+                D = self._model_dims[name]
+                
+                emb = self._flat_buffers[name][start_frame * D : end_frame * D].reshape(-1, D)
+                # Cast back to float32 for PyTorch training stability
+                emb = emb.astype(np.float32)
+                
+                if emb.shape[0] > self.max_seq_len:
+                    emb = emb[: self.max_seq_len]
+                
+                hidden_states[name] = torch.from_numpy(emb)
+                seq_lens[name] = emb.shape[0]
+        else:
+            rg_idx, row = self._locate(idx)
+            rg = self._read_row_group(rg_idx)
+
+            for name in MODEL_NAMES:
+                # rg[name] is an Arrow ChunkedArray; indexing returns a
+                # ListScalar, and as_py() decodes only that single clip's
+                # nested list — not the whole row group.
+                emb = np.asarray(rg[name][row].as_py(), dtype=np.float32)
+                if emb.ndim != 2:
+                    raise ValueError(
+                        f"Expected 2D (T, D) embedding for '{name}', got shape {emb.shape}"
+                    )
+                if emb.shape[0] > self.max_seq_len:
+                    emb = emb[: self.max_seq_len]
+                hidden_states[name] = torch.from_numpy(emb)
+                seq_lens[name] = emb.shape[0]
 
         wer_scores = torch.from_numpy(self.wer_matrix[idx])
 
