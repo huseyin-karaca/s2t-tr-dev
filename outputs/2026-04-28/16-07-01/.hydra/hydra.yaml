@@ -1,0 +1,174 @@
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  launcher:
+    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+  sweeper:
+    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+    max_batch_size: null
+    params: null
+  help:
+    app_name: ${hydra.job.name}
+    header: '${hydra.help.app_name} is powered by Hydra.
+
+      '
+    footer: 'Powered by Hydra (https://hydra.cc)
+
+      Use --hydra-help to view Hydra specific help
+
+      '
+    template: '${hydra.help.header}
+
+      == Configuration groups ==
+
+      Compose your configuration from those groups (group=option)
+
+
+      $APP_CONFIG_GROUPS
+
+
+      == Config ==
+
+      Override anything in the config (foo.bar=value)
+
+
+      $CONFIG
+
+
+      ${hydra.help.footer}
+
+      '
+  hydra_help:
+    template: 'Hydra (${hydra.runtime.version})
+
+      See https://hydra.cc for more info.
+
+
+      == Flags ==
+
+      $FLAGS_HELP
+
+
+      == Configuration groups ==
+
+      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+      to command line)
+
+
+      $HYDRA_CONFIG_GROUPS
+
+
+      Use ''--cfg hydra'' to Show the Hydra config.
+
+      '
+    hydra_help: ???
+  hydra_logging:
+    version: 1
+    formatters:
+      simple:
+        format: '[%(asctime)s][HYDRA] %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+    root:
+      level: INFO
+      handlers:
+      - console
+    loggers:
+      logging_example:
+        level: DEBUG
+    disable_existing_loggers: false
+  job_logging:
+    version: 1
+    formatters:
+      simple:
+        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+      file:
+        class: logging.FileHandler
+        formatter: simple
+        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+    root:
+      level: INFO
+      handlers:
+      - console
+      - file
+    disable_existing_loggers: false
+  env: {}
+  mode: RUN
+  searchpath: []
+  callbacks: {}
+  output_subdir: .hydra
+  overrides:
+    hydra:
+    - hydra.mode=RUN
+    task:
+    - parquet_path=data/processed/edinburghcstr_ami/combined_features_with_transcripts.parquet
+    - experiment_name=mlp_pool
+    - log_dir=reports/main_results/ami
+    - train_ratio=0.8
+    - val_ratio=0.1
+    - max_seq_len=2000
+    - batch_size=128
+    - num_workers=8
+    - max_epochs=1
+    - learning_rate=0.0002
+    - primary_weight=1.0
+    - aux_ce_weight=0.0
+    - soft_ce_weight=0.5
+    - soft_ce_temperature=1.5
+    - class_balanced_loss=true
+    - seed=42
+    - precision=bf16-mixed
+    - limit_batches=2
+    - arch=mlp_pool
+  job:
+    name: train
+    chdir: null
+    override_dirname: arch=mlp_pool,aux_ce_weight=0.0,batch_size=128,class_balanced_loss=true,experiment_name=mlp_pool,learning_rate=0.0002,limit_batches=2,log_dir=reports/main_results/ami,max_epochs=1,max_seq_len=2000,num_workers=8,parquet_path=data/processed/edinburghcstr_ami/combined_features_with_transcripts.parquet,precision=bf16-mixed,primary_weight=1.0,seed=42,soft_ce_temperature=1.5,soft_ce_weight=0.5,train_ratio=0.8,val_ratio=0.1
+    id: ???
+    num: ???
+    config_name: config
+    env_set: {}
+    env_copy: []
+    config:
+      override_dirname:
+        kv_sep: '='
+        item_sep: ','
+        exclude_keys: []
+  runtime:
+    version: 1.3.2
+    version_base: '1.3'
+    cwd: /Users/huseyinkaraca/Desktop/s2t-tr-dev
+    config_sources:
+    - path: hydra.conf
+      schema: pkg
+      provider: hydra
+    - path: /Users/huseyinkaraca/Desktop/s2t-tr-dev/configs
+      schema: file
+      provider: main
+    - path: ''
+      schema: structured
+      provider: schema
+    output_dir: /Users/huseyinkaraca/Desktop/s2t-tr-dev/outputs/2026-04-28/16-07-01
+    choices:
+      experiment: null
+      hydra/env: default
+      hydra/callbacks: null
+      hydra/job_logging: default
+      hydra/hydra_logging: default
+      hydra/hydra_help: default
+      hydra/help: default
+      hydra/sweeper: basic
+      hydra/launcher: basic
+      hydra/output: default
+  verbose: false

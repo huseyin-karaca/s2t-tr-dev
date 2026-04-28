@@ -28,10 +28,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-import typer
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
-app = typer.Typer(help="Run the full main-results pipeline for one dataset.")
 
 
 def _python_module(name: str, *args: str) -> List[str]:
@@ -60,29 +60,19 @@ def _flags_from_dict(d: Dict[str, Any]) -> List[str]:
     return out
 
 
-@app.command()
-def run(
-    config: str = typer.Option(..., "--config", "-c"),
-    output_dir: str = typer.Option(..., "--output-dir", "-o"),
-    skip_training_free: bool = typer.Option(
-        False, "--skip-training-free",
-        help="Skip eval_baselines (use cached baselines.json).",
-    ),
-    skip_rover: bool = typer.Option(
-        False, "--skip-rover", help="Skip ROVER (use cached rover.json).",
-    ),
-):
+@hydra.main(version_base="1.3", config_path="../../configs", config_name="orchestrator")
+def run(cfg: DictConfig):
     """Run training-free + ROVER + every trained method, aggregate to JSON."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    cfg = json.loads(Path(config).read_text())
-    parquet_path: str = cfg["parquet_path"]
-    shared: Dict[str, Any] = cfg.get("shared", {})
-    methods: List[Dict[str, Any]] = cfg.get("methods", [])
+    pipeline = cfg.pipeline
+    parquet_path: str = pipeline.parquet_path
+    shared = OmegaConf.to_container(pipeline.get("shared", {}), resolve=True)
+    methods = OmegaConf.to_container(pipeline.get("methods", []), resolve=True)
 
-    out_root = Path(output_dir)
+    out_root = Path(cfg.get("output_dir", "reports/main_results/ami"))
     out_root.mkdir(parents=True, exist_ok=True)
 
     split_args = {
@@ -92,7 +82,7 @@ def run(
     }
 
     baselines_json = out_root / "baselines.json"
-    if not skip_training_free:
+    if not cfg.get("skip_training_free", False):
         _run(_python_module(
             "src.training.eval_baselines",
             "--parquet-path", parquet_path,
@@ -102,7 +92,7 @@ def run(
         ), description="training-free baselines")
 
     rover_json = out_root / "rover.json"
-    if not skip_rover:
+    if not cfg.get("skip_rover", False):
         _run(_python_module(
             "src.training.rover",
             "--parquet-path", parquet_path,
@@ -112,7 +102,6 @@ def run(
         ), description="ROVER baselines")
 
     aggregated: Dict[str, Any] = {
-        "config_path": config,
         "parquet_path": parquet_path,
         "shared": shared,
         "training_free": (
@@ -133,12 +122,19 @@ def run(
         run_dir.mkdir(parents=True, exist_ok=True)
         merged = {**shared, **{k: v for k, v in method.items() if k != "name"}}
 
-        train_flags = _flags_from_dict({
-            "parquet-path": parquet_path,
-            "experiment-name": name,
-            "log-dir": str(out_root),
-            **merged,
-        })
+        # Format as Hydra overrides instead of Typer flags
+        train_flags = [
+            f"parquet_path={parquet_path}",
+            f"experiment_name={name}",
+            f"log_dir={out_root}"
+        ]
+        for k, v in merged.items():
+            if v is True:
+                train_flags.append(f"{k}=true")
+            elif v is False:
+                train_flags.append(f"{k}=false")
+            elif v is not None:
+                train_flags.append(f"{k}={v}")
         _run(_python_module("src.training.train", *train_flags),
              description=f"train method={name}")
 
@@ -157,4 +153,4 @@ def run(
 
 
 if __name__ == "__main__":
-    app()
+    run()

@@ -26,7 +26,8 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-import typer
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 # We only load checkpoints we produced ourselves, so the weights_only security
 # hardening from PyTorch 2.6 is unnecessary here. Force the old behavior.
@@ -42,7 +43,7 @@ from pytorch_lightning.callbacks import (
     ModelCheckpoint,
     TQDMProgressBar,
 )
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 from torch.utils.data import DataLoader, random_split
 
 from src.data.dataset import MODEL_NAMES, ASRFeatureDataset, collate_fn
@@ -54,8 +55,6 @@ ARCH_MLP_POOL = "mlp_pool"
 SUPPORTED_ARCHS = (ARCH_HIERARCHICAL, ARCH_MLP_POOL)
 
 logger = logging.getLogger(__name__)
-
-app = typer.Typer(help="Train the ASR Model Selector on unified parquet features.")
 
 MODEL_DIMS = {
     "hubert":   1024,  # facebook/hubert-large-ls960-ft
@@ -295,120 +294,37 @@ class ASRSelectorModule(pl.LightningModule):
         }
 
 
-@app.command()
-def train(
-    # Data
-    parquet_path: str = typer.Option(
-        "data/processed/edinburghcstr_ami/combined_features.parquet",
-        "--parquet-path", "-p",
-        help="Path to the unified combined_features.parquet.",
-    ),
-    train_ratio: float = typer.Option(0.8, "--train-ratio"),
-    val_ratio: float = typer.Option(0.1, "--val-ratio"),
-    max_seq_len: int = typer.Option(2000, "--max-seq-len"),
-    batch_size: int = typer.Option(128, "--batch-size", "-b"),
-    num_workers: int = typer.Option(8, "--num-workers"),
-    # Model
-    arch: str = typer.Option(
-        ARCH_HIERARCHICAL, "--arch",
-        help=f"Routing architecture: one of {SUPPORTED_ARCHS}.",
-    ),
-    d_model: int = typer.Option(256, "--d-model"),
-    n_heads: int = typer.Option(4, "--n-heads"),
-    stage1_layers: int = typer.Option(2, "--stage1-layers"),
-    stage2_layers: int = typer.Option(1, "--stage2-layers"),
-    ffn_dim: int = typer.Option(512, "--ffn-dim"),
-    dropout: float = typer.Option(0.15, "--dropout"),
-    no_cross_attention: bool = typer.Option(False, "--no-cross-attention"),
-    separate_stage1: bool = typer.Option(
-        False, "--separate-stage1",
-        help="Use separate Stage 1 weights per model (default: shared).",
-    ),
-    mlp_hidden: int = typer.Option(
-        1024, "--mlp-hidden",
-        help="Hidden width of each MLP layer (used when --arch mlp_pool).",
-    ),
-    mlp_layers: int = typer.Option(
-        2, "--mlp-layers",
-        help="Number of hidden layers in the MLP (used when --arch mlp_pool).",
-    ),
-    # Training
-    learning_rate: float = typer.Option(2e-4, "--learning-rate", "--lr"),
-    weight_decay: float = typer.Option(1e-2, "--weight-decay"),
-    warmup_steps: int = typer.Option(200, "--warmup-steps"),
-    max_epochs: int = typer.Option(50, "--max-epochs"),
-    primary_weight: float = typer.Option(
-        1.0, "--primary-weight",
-        help="Weight of weighted-WER primary loss.",
-    ),
-    aux_ce_weight: float = typer.Option(
-        0.3, "--aux-ce-weight",
-        help="Weight of hard-label CE (argmin WER) auxiliary loss.",
-    ),
-    soft_ce_weight: float = typer.Option(
-        0.5, "--soft-ce-weight",
-        help="Weight of soft CE against softmax(-wer/T) target distribution.",
-    ),
-    soft_ce_temperature: float = typer.Option(
-        0.5, "--soft-ce-temperature",
-        help="Temperature for soft CE target; lower = sharper (closer to hard CE).",
-    ),
-    label_smoothing: float = typer.Option(0.1, "--label-smoothing"),
-    class_balanced_loss: bool = typer.Option(
-        False, "--class-balanced-loss",
-        help="Use inverse frequency weighting to prevent mode collapse on minority models.",
-    ),
-    gradient_clip_val: float = typer.Option(1.0, "--gradient-clip-val"),
-    early_stopping_patience: int = typer.Option(
-        5, "--early-stopping-patience",
-        help="Number of validation epochs with no improvement before stopping.",
-    ),
-    deterministic: bool = typer.Option(
-        False, "--deterministic",
-        help="Set True for reproducibility, False for maximum Tensor Core speed.",
-    ),
-    seed: int = typer.Option(42, "--seed"),
-    limit_batches: Optional[int] = typer.Option(
-        None, "--limit-batches",
-        help="Limit train/val/test batches per epoch for smoke tests.",
-    ),
-    # Logging
-    experiment_name: str = typer.Option("asr_selector", "--experiment-name"),
-    log_dir: str = typer.Option("logs", "--log-dir"),
-    progress_bar_refresh: int = typer.Option(
-        20, "--progress-bar-refresh",
-        help="tqdm refresh interval in steps (higher = less notebook spam).",
-    ),
-):
+@hydra.main(version_base="1.3", config_path="../../configs", config_name="config")
+def train(cfg: DictConfig):
     """Train the ASR Model Selector."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    pl.seed_everything(seed)
+    pl.seed_everything(cfg.seed)
 
     full_dataset = ASRFeatureDataset(
-        parquet_path=parquet_path,
-        max_seq_len=max_seq_len,
+        parquet_path=cfg.parquet_path,
+        max_seq_len=cfg.max_seq_len,
     )
 
     n_total = len(full_dataset)
-    n_train = int(n_total * train_ratio)
-    n_val = int(n_total * val_ratio)
+    n_train = int(n_total * cfg.train_ratio)
+    n_val = int(n_total * cfg.val_ratio)
     n_test = n_total - n_train - n_val
     logger.info("Dataset splits: train=%d, val=%d, test=%d", n_train, n_val, n_test)
 
     train_ds, val_ds, test_ds = random_split(
         full_dataset,
         [n_train, n_val, n_test],
-        generator=torch.Generator().manual_seed(seed),
+        generator=torch.Generator().manual_seed(cfg.seed),
     )
 
     loader_kwargs = dict(
-        batch_size=batch_size,
+        batch_size=cfg.batch_size,
         collate_fn=collate_fn,
-        num_workers=num_workers,
+        num_workers=cfg.num_workers,
         pin_memory=True,
     )
     train_loader = DataLoader(train_ds, shuffle=True, drop_last=True, **loader_kwargs)
@@ -416,31 +332,31 @@ def train(
     test_loader = DataLoader(test_ds, shuffle=False, **loader_kwargs)
 
     steps_per_epoch = len(train_loader)
-    total_steps = steps_per_epoch * max_epochs
+    total_steps = steps_per_epoch * cfg.max_epochs
 
     lightning_model = ASRSelectorModule(
-        arch=arch,
-        d_model=d_model,
-        n_heads=n_heads,
-        stage1_layers=stage1_layers,
-        stage2_layers=stage2_layers,
-        ffn_dim=ffn_dim,
-        dropout=dropout,
-        use_cross_attention_bridge=not no_cross_attention,
-        share_stage1_weights=not separate_stage1,
-        max_seq_len=max_seq_len,
-        mlp_hidden=mlp_hidden,
-        mlp_layers=mlp_layers,
-        learning_rate=learning_rate,
-        weight_decay=weight_decay,
-        warmup_steps=warmup_steps,
+        arch=cfg.arch,
+        d_model=cfg.d_model,
+        n_heads=cfg.n_heads,
+        stage1_layers=cfg.stage1_layers,
+        stage2_layers=cfg.stage2_layers,
+        ffn_dim=cfg.ffn_dim,
+        dropout=cfg.dropout,
+        use_cross_attention_bridge=not cfg.no_cross_attention,
+        share_stage1_weights=not cfg.separate_stage1,
+        max_seq_len=cfg.max_seq_len,
+        mlp_hidden=cfg.mlp_hidden,
+        mlp_layers=cfg.mlp_layers,
+        learning_rate=cfg.learning_rate,
+        weight_decay=cfg.weight_decay,
+        warmup_steps=cfg.warmup_steps,
         total_steps=total_steps,
-        primary_weight=primary_weight,
-        aux_ce_weight=aux_ce_weight,
-        soft_ce_weight=soft_ce_weight,
-        soft_ce_temperature=soft_ce_temperature,
-        label_smoothing=label_smoothing,
-        class_balanced_loss=class_balanced_loss,
+        primary_weight=cfg.primary_weight,
+        aux_ce_weight=cfg.aux_ce_weight,
+        soft_ce_weight=cfg.soft_ce_weight,
+        soft_ce_temperature=cfg.soft_ce_temperature,
+        label_smoothing=cfg.label_smoothing,
+        class_balanced_loss=cfg.class_balanced_loss,
     )
 
     param_counts = lightning_model.model.count_parameters()
@@ -451,7 +367,7 @@ def train(
     is_tty = sys.stdout.isatty()
     callbacks = [
         ModelCheckpoint(
-            dirpath=os.path.join(log_dir, experiment_name, "checkpoints"),
+            dirpath=os.path.join(cfg.log_dir, cfg.experiment_name, "checkpoints"),
             filename="best-{epoch:02d}",
             monitor="val/selected_wer",
             mode="min",
@@ -460,7 +376,7 @@ def train(
         ),
         EarlyStopping(
             monitor="val/selected_wer",
-            patience=early_stopping_patience,
+            patience=cfg.early_stopping_patience,
             mode="min",
             verbose=True,
         ),
@@ -469,27 +385,33 @@ def train(
     ]
     
     if is_tty:
-        callbacks.append(TQDMProgressBar(refresh_rate=progress_bar_refresh))
+        callbacks.append(TQDMProgressBar(refresh_rate=cfg.progress_bar_refresh))
 
-    tb_logger = TensorBoardLogger(save_dir=log_dir, name=experiment_name)
+    # Initialize W&B Logger
+    wandb_logger = WandbLogger(
+        project="s2t-tr-dev",
+        name=cfg.experiment_name,
+        save_dir=cfg.log_dir,
+        config=OmegaConf.to_container(cfg, resolve=True)
+    )
 
     trainer_kwargs = dict(
-        max_epochs=max_epochs,
+        max_epochs=cfg.max_epochs,
         callbacks=callbacks,
-        logger=tb_logger,
-        gradient_clip_val=gradient_clip_val,
+        logger=wandb_logger,
+        gradient_clip_val=cfg.gradient_clip_val,
         accelerator="auto",
         devices=1,
-        precision="16-mixed",
+        precision=cfg.precision,
         log_every_n_steps=10,
-        deterministic=deterministic,
+        deterministic=cfg.deterministic,
         enable_progress_bar=is_tty,
     )
-    if limit_batches is not None:
+    if cfg.limit_batches is not None:
         trainer_kwargs.update(
-            limit_train_batches=limit_batches,
-            limit_val_batches=limit_batches,
-            limit_test_batches=limit_batches,
+            limit_train_batches=cfg.limit_batches,
+            limit_val_batches=cfg.limit_batches,
+            limit_test_batches=cfg.limit_batches,
         )
 
     trainer = pl.Trainer(**trainer_kwargs)
@@ -500,7 +422,7 @@ def train(
     logger.info("Running test evaluation...")
     test_metrics_list = trainer.test(lightning_model, test_loader, ckpt_path="best")
 
-    results_dir = os.path.join(log_dir, experiment_name)
+    results_dir = os.path.join(cfg.log_dir, cfg.experiment_name)
     os.makedirs(results_dir, exist_ok=True)
 
     test_results = test_metrics_list[0] if test_metrics_list else {}
@@ -513,36 +435,11 @@ def train(
     logger.info("Wrote test results to %s", test_json_path)
     
     # Updated config snapshot for Single Source of Truth
-    config_snapshot = {
-        "parquet_path": parquet_path,
-        "train_ratio": train_ratio, "val_ratio": val_ratio,
-        "max_seq_len": max_seq_len, "batch_size": batch_size,
-        "num_workers": num_workers,
-        "arch": arch,
-        "d_model": d_model, "n_heads": n_heads,
-        "stage1_layers": stage1_layers, "stage2_layers": stage2_layers,
-        "ffn_dim": ffn_dim, "dropout": dropout,
-        "use_cross_attention_bridge": not no_cross_attention,
-        "share_stage1_weights": not separate_stage1,
-        "mlp_hidden": mlp_hidden, "mlp_layers": mlp_layers,
-        "learning_rate": learning_rate, "weight_decay": weight_decay,
-        "warmup_steps": warmup_steps, "max_epochs": max_epochs,
-        "primary_weight": primary_weight,
-        "aux_ce_weight": aux_ce_weight,
-        "soft_ce_weight": soft_ce_weight,
-        "soft_ce_temperature": soft_ce_temperature,
-        "label_smoothing": label_smoothing,
-        "class_balanced_loss": class_balanced_loss,
-        "early_stopping_patience": early_stopping_patience,
-        "deterministic": deterministic,
-        "gradient_clip_val": gradient_clip_val, "seed": seed,
-        "limit_batches": limit_batches,
-        "experiment_name": experiment_name, "log_dir": log_dir,
-    }
+    config_snapshot = OmegaConf.to_container(cfg, resolve=True)
     with open(os.path.join(results_dir, "config.json"), "w") as f:
         json.dump(config_snapshot, f, indent=2)
     logger.info("Training complete. Logs saved to %s", results_dir)
 
 
 if __name__ == "__main__":
-    app()
+    train()

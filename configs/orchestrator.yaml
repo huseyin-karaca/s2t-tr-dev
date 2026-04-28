@@ -1,0 +1,7 @@
+defaults:
+  - _self_
+  - pipeline: main_results_ami_v2
+
+output_dir: "reports/main_results/ami"
+skip_training_free: false
+skip_rover: false
