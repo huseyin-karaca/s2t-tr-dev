@@ -23,5 +23,7 @@ shared:
 methods:
   - name: "mlp_pool"
     arch: "mlp_pool"
+    soft_ce_weight: 0.0
+    aux_ce_weight: 0.0
   - name: "hierarchical_transformer"
     arch: "hierarchical_transformer"
