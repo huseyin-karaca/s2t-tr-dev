@@ -1,0 +1,5 @@
+- pipeline=main_results_ami_v2
+- +pipeline.methods.0.soft_ce_weight=0.0
+- +pipeline.methods.0.aux_ce_weight=0.0
+- pipeline.shared.max_epochs=1
+- +pipeline.shared.limit_batches=1

@@ -60,6 +60,52 @@ def _flags_from_dict(d: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _log_results_table(aggregated: Dict[str, Any]) -> None:
+    """Print a nicely formatted table of the results for paper inclusion."""
+    rows = []
+    
+    # 1. Training-free baselines
+    if aggregated.get("training_free"):
+        tf_data = aggregated["training_free"]
+        # Extract WER metrics
+        for k, v in tf_data.items():
+            if isinstance(v, float) and "wer" in k.lower():
+                name = k.replace("wer_", "").replace("_wer", "").replace("_", " ").title()
+                rows.append((f"Baseline: {name}", v))
+    
+    # 2. ROVER baselines
+    if aggregated.get("rover"):
+        rover_data = aggregated["rover"]
+        for k, v in rover_data.items():
+            if isinstance(v, float) and "wer" in k.lower():
+                name = k.replace("wer_", "").replace("_wer", "").replace("_", " ").title()
+                rows.append((f"ROVER: {name}", v))
+
+    # 3. Trained methods
+    if aggregated.get("methods"):
+        for name, data in aggregated["methods"].items():
+            if "test" in data and "selected_wer" in data["test"]:
+                rows.append((f"Model: {name}", data["test"]["selected_wer"]))
+            elif "test" in data and "wer" in data["test"]:
+                rows.append((f"Model: {name}", data["test"]["wer"]))
+
+    if not rows:
+        logger.info("No results found to print.")
+        return
+
+    # Sort by WER ascending
+    rows.sort(key=lambda x: x[1])
+
+    logger.info("=" * 60)
+    logger.info("FINAL EXPERIMENT RESULTS (TEST WER)")
+    logger.info("=" * 60)
+    logger.info(f"| {'Method':<40} | {'Test WER':<11} |")
+    logger.info("-" * 60)
+    for name, wer in rows:
+        logger.info(f"| {name:<40} | {wer:>11.4f} |")
+    logger.info("=" * 60)
+
+
 @hydra.main(version_base="1.3", config_path="../../configs", config_name="orchestrator")
 def run(cfg: DictConfig):
     """Run training-free + ROVER + every trained method, aggregate to JSON."""
@@ -147,6 +193,8 @@ def run(cfg: DictConfig):
         }
         with open(out_root / "main_results.json", "w") as f:
             json.dump(aggregated, f, indent=2)
+
+    _log_results_table(aggregated)
 
     logger.info("Main-results pipeline complete. Results at %s",
                 out_root / "main_results.json")

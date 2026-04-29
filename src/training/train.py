@@ -62,8 +62,8 @@ MODEL_DIMS = {
     "wav2vec2": 1024,   # facebook/wav2vec2-base-960h
 }
 
-# Optimize for NVIDIA Blackwell / Tensor Cores (TF32 activation)
-torch.set_float32_matmul_precision('medium')
+# Matmul precision will be set in train() based on cfg
+
 
 class EpochSummary(Callback):
     """One concise log line per epoch — designed for non-tty subprocess output."""
@@ -92,6 +92,22 @@ class EpochSummary(Callback):
             m.get("val/selected_wer", float("nan")),
             m.get("val/selection_accuracy", float("nan")),
         )
+
+
+class SaveSpecificEpochsCallback(Callback):
+    """Saves checkpoints for specific epochs explicitly requested by the user."""
+    def __init__(self, epochs, dirpath):
+        super().__init__()
+        self.epochs = set(epochs)
+        self.dirpath = dirpath
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        current_epoch = trainer.current_epoch + 1
+        if current_epoch in self.epochs:
+            os.makedirs(self.dirpath, exist_ok=True)
+            ckpt_path = os.path.join(self.dirpath, f"epoch-{current_epoch:02d}.ckpt")
+            trainer.save_checkpoint(ckpt_path)
+            logger.info(f"Saved specific epoch checkpoint: {ckpt_path}")
 
 
 class ASRSelectorModule(pl.LightningModule):
@@ -302,6 +318,17 @@ def train(cfg: DictConfig):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
+    allow_tf32 = cfg.get("allow_tf32", True)
+    if allow_tf32:
+        torch.set_float32_matmul_precision('medium')
+        torch.backends.cudnn.allow_tf32 = True
+    else:
+        logger.info("TF32 optimizations disabled for reproducibility.")
+        torch.set_float32_matmul_precision('highest')
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
     pl.seed_everything(cfg.seed)
 
     full_dataset = ASRFeatureDataset(
@@ -370,15 +397,22 @@ def train(cfg: DictConfig):
         logger.info("  %25s: %10d", k, v)
 
     is_tty = sys.stdout.isatty()
+    test_average_epochs = cfg.get("test_average_epochs", 1)
+    save_top_k = 3
+    if isinstance(test_average_epochs, int) and test_average_epochs > 0:
+        save_top_k = max(3, test_average_epochs)
+
+    ckpt_dir = os.path.join(cfg.log_dir, cfg.experiment_name, "checkpoints")
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=ckpt_dir,
+        filename="best-{epoch:02d}",
+        monitor="val/selected_wer",
+        mode="min",
+        save_top_k=save_top_k,
+        save_last=True,
+    )
     callbacks = [
-        ModelCheckpoint(
-            dirpath=os.path.join(cfg.log_dir, cfg.experiment_name, "checkpoints"),
-            filename="best-{epoch:02d}",
-            monitor="val/selected_wer",
-            mode="min",
-            save_top_k=3,
-            save_last=True,
-        ),
+        checkpoint_callback,
         EarlyStopping(
             monitor="val/selected_wer",
             patience=cfg.early_stopping_patience,
@@ -391,6 +425,9 @@ def train(cfg: DictConfig):
     
     if is_tty:
         callbacks.append(TQDMProgressBar(refresh_rate=cfg.progress_bar_refresh))
+
+    if isinstance(test_average_epochs, (list, tuple)):
+        callbacks.append(SaveSpecificEpochsCallback(test_average_epochs, ckpt_dir))
 
     # Initialize W&B Logger
     wandb_logger = WandbLogger(
@@ -425,18 +462,62 @@ def train(cfg: DictConfig):
     trainer.fit(lightning_model, train_loader, val_loader)
 
     logger.info("Running test evaluation...")
-    test_metrics_list = trainer.test(lightning_model, test_loader, ckpt_path="best")
+    ckpts_to_test = []
+
+    if isinstance(test_average_epochs, int) and test_average_epochs > 1:
+        # Average the top K checkpoints
+        if checkpoint_callback.best_k_models:
+            sorted_ckpts = sorted(checkpoint_callback.best_k_models.items(), key=lambda x: x[1])
+            ckpts_to_test = [p for p, _ in sorted_ckpts[:test_average_epochs]]
+            logger.info(f"Averaging top {len(ckpts_to_test)} checkpoints: {ckpts_to_test}")
+        else:
+            ckpts_to_test = [checkpoint_callback.best_model_path]
+    elif isinstance(test_average_epochs, (list, tuple)):
+        # Average specific epochs
+        for ep in test_average_epochs:
+            p = os.path.join(ckpt_dir, f"epoch-{ep:02d}.ckpt")
+            if os.path.exists(p):
+                ckpts_to_test.append(p)
+            else:
+                logger.warning(f"Requested specific epoch checkpoint not found: {p}")
+        logger.info(f"Averaging specific epoch checkpoints: {ckpts_to_test}")
+    else:
+        # Default single best checkpoint
+        if checkpoint_callback.best_model_path:
+            ckpts_to_test = [checkpoint_callback.best_model_path]
+        else:
+            ckpts_to_test = [None]
+        logger.info(f"Testing on single best checkpoint: {ckpts_to_test}")
+
+    if not ckpts_to_test:
+        logger.warning("No checkpoints found to test. Testing on current weights.")
+        ckpts_to_test = [None]
+
+    all_metrics = []
+    for ckpt in ckpts_to_test:
+        logger.info(f"Evaluating checkpoint: {ckpt}")
+        test_metrics_list = trainer.test(lightning_model, test_loader, ckpt_path=ckpt)
+        if test_metrics_list:
+            all_metrics.append(test_metrics_list[0])
+
+    if all_metrics:
+        avg_metrics = {}
+        for k in all_metrics[0].keys():
+            avg_metrics[k] = sum(m[k] for m in all_metrics) / len(all_metrics)
+        test_results = avg_metrics
+        logger.info("Averaged Test Metrics: %s", test_results)
+    else:
+        test_results = {}
 
     results_dir = os.path.join(cfg.log_dir, cfg.experiment_name)
     os.makedirs(results_dir, exist_ok=True)
 
-    test_results = test_metrics_list[0] if test_metrics_list else {}
     flat_test = {
         k.replace("test/", ""): float(v) for k, v in test_results.items()
     }
     test_json_path = os.path.join(results_dir, "test_results.json")
     with open(test_json_path, "w") as f:
-        json.dump({"split": "test", **flat_test}, f, indent=2)
+        json.dump({"split": "test", **flat_test, "averaged_checkpoints": ckpts_to_test}, f, indent=2)
     logger.info("Wrote test results to %s", test_json_path)
     
     # Updated config snapshot for Single Source of Truth

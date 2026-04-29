@@ -66,8 +66,16 @@ deterministic: false
 seed: 42
 limit_batches: null
 
+# Checkpointing / Testing
+# By default, evaluate the best checkpoint. If test_average_epochs is an integer > 1,
+# it averages the top K best checkpoints. If it's a list (e.g. [40, 45, 50]),
+# it averages those specific epochs (assuming they were saved).
+test_average_epochs: 1
+
 # Compute / Hardware
 precision: "16-mixed"
+# Disabling TF32 makes training completely reproducible but slightly slower on Ampere/Blackwell GPUs
+allow_tf32: true
 
 # Logging
 experiment_name: "asr_selector"
