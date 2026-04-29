@@ -20,6 +20,7 @@ dependencies = [
     "dotenv>=0.9.9",
     "duckdb>=1.5.2",
     "evaluate>=0.4.6",
+    "gdown>=6.0.0",
     "hydra-core>=1.3.2",
     "ipython",
     "jiwer>=4.0.0",

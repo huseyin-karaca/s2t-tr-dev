@@ -1,8 +1,13 @@
 defaults:
   - _self_
-  - experiment: null
+  - experiments: null
 
-# Data
+# Pipeline Run Configs
+output_dir: "reports"
+skip_training_free: false
+skip_rover: false
+
+# Data Defaults
 parquet_path: "data/processed/edinburghcstr_ami/combined_features.parquet"
 train_ratio: 0.8
 val_ratio: 0.1
@@ -11,32 +16,13 @@ batch_size: 128
 num_workers: 0
 
 # Parquet loading strategy.
-#   eager_load:             if True, decode the entire feature parquet into
-#                           per-expert flat numpy buffers + offsets at startup
-#                           and serve every batch from RAM (no per-batch
-#                           parquet decode). Recommended on hosts with
-#                           enough system RAM (~40 GB for AMI). Multi-worker
-#                           DataLoaders share the buffers via fork+COW.
-#                           Set false on tight-RAM machines to fall back to
-#                           the lazy row-group reader.
-#   auto_rechunk:           if True, transparently rewrite the input parquet
-#                           with small row groups when needed (fixes Colab
-#                           DataLoader OOMs caused by single-row-group
-#                           inputs). Also bounds peak RAM during the
-#                           eager-mode streaming decode. Cached on local
-#                           disk after first run.
-#   target_row_group_size:  rows per row group in the rechunked cache.
-#   parquet_cache_dir:      where to put the rechunked cache. null => use
-#                           $S2T_PARQUET_CACHE or $TMPDIR/s2t-tr-dev-cache.
-#   row_group_cache_size:   per-worker LRU cache for lazy mode. null =>
-#                           sensible default.
 eager_load: false
 auto_rechunk: true
 target_row_group_size: 256
 parquet_cache_dir: null
 row_group_cache_size: null
 
-# Model
+# Model Defaults
 arch: "hierarchical_transformer"
 d_model: 256
 n_heads: 4
@@ -49,7 +35,7 @@ separate_stage1: false
 mlp_hidden: 1024
 mlp_layers: 2
 
-# Training
+# Training Defaults
 learning_rate: 2e-4
 weight_decay: 1e-2
 warmup_steps: 200
@@ -67,14 +53,10 @@ seed: 42
 limit_batches: null
 
 # Checkpointing / Testing
-# By default, evaluate the best checkpoint. If test_average_epochs is an integer > 1,
-# it averages the top K best checkpoints. If it's a list (e.g. [40, 45, 50]),
-# it averages those specific epochs (assuming they were saved).
 test_average_epochs: 1
 
 # Compute / Hardware
 precision: "16-mixed"
-# Disabling TF32 makes training completely reproducible but slightly slower on Ampere/Blackwell GPUs
 allow_tf32: true
 
 # Logging

@@ -137,14 +137,15 @@ def _log_results_table(aggregated: Dict[str, Any]) -> None:
     logger.info("=" * 70)
 
 
-@hydra.main(version_base="1.3", config_path="../../configs", config_name="orchestrator")
+@hydra.main(version_base="1.3", config_path="../../configs", config_name="config")
 def run(cfg: DictConfig):
     """Run training-free + ROVER + every trained method, aggregate to JSON."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    pipeline = cfg.pipeline
+    # The pipeline logic is now inside cfg.experiments
+    pipeline = cfg.experiments
     parquet_path: str = pipeline.parquet_path
     shared = OmegaConf.to_container(pipeline.get("shared", {}), resolve=True)
     raw_methods = OmegaConf.to_container(pipeline.get("methods", []), resolve=True)

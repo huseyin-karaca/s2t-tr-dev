@@ -4,7 +4,7 @@
 
 PROJECT_NAME = s2t-tr-dev
 PYTHON_VERSION = 3.10
-PYTHON_INTERPRETER = python
+PYTHON_INTERPRETER = uv run python
 
 #################################################################################
 # COMMANDS                                                                      #
@@ -57,6 +57,16 @@ create_environment:
 # PROJECT RULES                                                                 #
 #################################################################################
 
+
+## Download processed AMI dataset from Google Drive
+.PHONY: download_ami
+download_ami:
+	uv run python -m src.data.get_processed -d ami
+
+## Run the main results pipeline for the AMI dataset
+.PHONY: run_main_results_ami
+run_main_results_ami:
+	uv run python -m src.experiments.main_results experiments=main_results_ami
 
 ## Make dataset
 .PHONY: data
