@@ -1,4 +1,4 @@
-_comment_: "Experiment v6: Comprehensive ablation study. Fixed Soft Loss Collapse by increasing aux_ce_weight to 1.0"
+_comment_: "Experiment v6: Comprehensive ablation study. Fixed Soft Loss Collapse by increasing aux_ce_weight to 1.0. (Basically, one of the seeds (seed 0) performed bad, compared to others. It collapsed to 0.55 WER. By increasing aux_ce_weight to 1.0, we hope to fix this issue.)"
 parquet_path: "data/processed/edinburghcstr_ami/combined_features_with_transcripts.parquet"
 shared:
   train_ratio: 0.8
@@ -11,9 +11,11 @@ shared:
   precision: "bf16-mixed"
   eager_load: true
   allow_tf32: false
-  test_average_epochs: 3
+  test_average_epochs: 1
+  early_stopping_patience: 8
 
 methods:
+
   # 1. Standard Baseline (Old Architecture + Old Loss)
   - name: "mlp_pool_hard_ce"
     arch: "mlp_pool"
@@ -24,7 +26,7 @@ methods:
     seed: [42, 0, 2]
 
   # 2. Architecture Ablation (New Architecture + Old Loss)
-  # Proves the hierarchical mechanism improves stability.
+  # Proves that your hierarchical mechanism captures context better than pooling, even without custom losses
   - name: "hierarchical_transformer_hard_ce"
     arch: "hierarchical_transformer"
     primary_weight: 0.0

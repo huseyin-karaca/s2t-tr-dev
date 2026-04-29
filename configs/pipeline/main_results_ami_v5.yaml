@@ -12,6 +12,7 @@ shared:
   eager_load: true
   allow_tf32: false
   test_average_epochs: 3  # Take top 3 checkpoint average for extra robustness within each seed
+  # aslında bence bu bir olarak koşturulmalıydı.o yüzden diğerinde bunu da bir olarak koşturacağım.
 
 methods:
   # 1. Standard Baseline (Old Architecture + Old Loss)
