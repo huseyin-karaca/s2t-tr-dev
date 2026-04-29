@@ -25,10 +25,12 @@ import json
 import logging
 import subprocess
 import sys
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
 import hydra
+import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,9 @@ def _log_results_table(aggregated: Dict[str, Any]) -> None:
         for k, v in tf_data.items():
             if isinstance(v, float) and "wer" in k.lower():
                 name = k.replace("wer_", "").replace("_wer", "").replace("_", " ").title()
-                rows.append((f"Baseline: {name}", v))
+                # Format baselines similarly
+                if isinstance(v, float):
+                     rows.append((f"Baseline: {name}", v, 0.0, 1))
     
     # 2. ROVER baselines
     if aggregated.get("rover"):
@@ -79,15 +83,38 @@ def _log_results_table(aggregated: Dict[str, Any]) -> None:
         for k, v in rover_data.items():
             if isinstance(v, float) and "wer" in k.lower():
                 name = k.replace("wer_", "").replace("_wer", "").replace("_", " ").title()
-                rows.append((f"ROVER: {name}", v))
+                rows.append((f"ROVER: {name}", v, 0.0, 1))
 
-    # 3. Trained methods
+    # 3. Trained methods (grouped by seed)
     if aggregated.get("methods"):
+        grouped_wers = {}
         for name, data in aggregated["methods"].items():
+            wer = None
             if "test" in data and "selected_wer" in data["test"]:
-                rows.append((f"Model: {name}", data["test"]["selected_wer"]))
+                wer = data["test"]["selected_wer"]
             elif "test" in data and "wer" in data["test"]:
-                rows.append((f"Model: {name}", data["test"]["wer"]))
+                wer = data["test"]["wer"]
+            
+            if wer is not None:
+                # Group names by removing `-seed[num]` or `_seed[num]`
+                base_name = re.sub(r"[-_]seed\d+$", "", name)
+                grouped_wers.setdefault(base_name, []).append((name, wer))
+
+        for base_name, items in grouped_wers.items():
+            wers = [w for _, w in items]
+            
+            if len(wers) > 1:
+                mean_wer = float(np.mean(wers))
+                std_wer = float(np.std(wers))
+                n = len(wers)
+                rows.append((f"Model: {base_name} (mean)", mean_wer, std_wer, n))
+                
+                # Also append individual single-seed results
+                for original_name, wer in items:
+                    rows.append((f"Model: {original_name}", wer, 0.0, 1))
+            else:
+                original_name = items[0][0]
+                rows.append((f"Model: {original_name}", wers[0], 0.0, 1))
 
     if not rows:
         logger.info("No results found to print.")
@@ -96,14 +123,18 @@ def _log_results_table(aggregated: Dict[str, Any]) -> None:
     # Sort by WER ascending
     rows.sort(key=lambda x: x[1])
 
-    logger.info("=" * 60)
+    logger.info("=" * 70)
     logger.info("FINAL EXPERIMENT RESULTS (TEST WER)")
-    logger.info("=" * 60)
-    logger.info(f"| {'Method':<40} | {'Test WER':<11} |")
-    logger.info("-" * 60)
-    for name, wer in rows:
-        logger.info(f"| {name:<40} | {wer:>11.4f} |")
-    logger.info("=" * 60)
+    logger.info("=" * 70)
+    logger.info(f"| {'Method':<40} | {'Test WER':<21} |")
+    logger.info("-" * 70)
+    for name, mean_wer, std_wer, n in rows:
+        if n > 1:
+            wer_str = f"{mean_wer:.4f} ± {std_wer:.4f} (n={n})"
+        else:
+            wer_str = f"{mean_wer:.4f}              "
+        logger.info(f"| {name:<40} | {wer_str:<21} |")
+    logger.info("=" * 70)
 
 
 @hydra.main(version_base="1.3", config_path="../../configs", config_name="orchestrator")
@@ -116,7 +147,20 @@ def run(cfg: DictConfig):
     pipeline = cfg.pipeline
     parquet_path: str = pipeline.parquet_path
     shared = OmegaConf.to_container(pipeline.get("shared", {}), resolve=True)
-    methods = OmegaConf.to_container(pipeline.get("methods", []), resolve=True)
+    raw_methods = OmegaConf.to_container(pipeline.get("methods", []), resolve=True)
+
+    # Automatically expand methods with multiple seeds
+    methods = []
+    for method in raw_methods:
+        seeds = method.get("seed", None)
+        if isinstance(seeds, list):
+            for s in seeds:
+                new_method = dict(method)
+                new_method["seed"] = s
+                new_method["name"] = f"{method['name']}-seed{s}"
+                methods.append(new_method)
+        else:
+            methods.append(method)
 
     out_root = Path(cfg.get("output_dir", "reports/main_results/ami"))
     out_root.mkdir(parents=True, exist_ok=True)

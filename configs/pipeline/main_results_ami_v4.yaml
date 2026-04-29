@@ -8,11 +8,10 @@ shared:
   num_workers: 4
   max_epochs: 50
   learning_rate: 2e-4
-  seed: 42
   precision: "bf16-mixed"
   eager_load: true
   
-  # Reproducibility settings
+  # Reproducibility settings, false if reproducible, true if not (faster)
   allow_tf32: false
 
 methods:
@@ -25,6 +24,8 @@ methods:
     soft_ce_weight: 0.0       # Disable Soft CE
     class_balanced_loss: true # Keep class balancing for fairness
     test_average_epochs: 1    # Standard single-checkpoint test
+    seed: [42, 0, 2]
+
 
   # 2. Proposed: Hierarchical Transformer with Full Mixed Loss + Checkpoint Averaging
   # This uses all the novelties: Architecture + Primary WER + Soft CE + Hard CE + Model Averaging
@@ -35,4 +36,5 @@ methods:
     soft_ce_weight: 0.5
     soft_ce_temperature: 1.5
     class_balanced_loss: true
-    test_average_epochs: 3    # Use the new feature: average top 3 checkpoints for maximum stability and performance
+    test_average_epochs: 1    # Use the new feature: average top 3 checkpoints for maximum stability and performance
+    seed: [42, 0, 2]
