@@ -137,6 +137,7 @@ class ASRSelectorModule(pl.LightningModule):
         soft_ce_temperature: float = 0.1,
         label_smoothing: float = 0.1,
         class_balanced_loss: bool = False,
+        class_priors: Optional[list[float]] = None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -182,11 +183,15 @@ class ASRSelectorModule(pl.LightningModule):
         self.class_balanced_loss = class_balanced_loss
 
         if self.class_balanced_loss:
-            # Oracle Dataset Priors: Hubert: ~32.3%, Whisper: ~44.4%, Wav2Vec2: ~23.3%
-            # Inverse frequencies to boost overshadowed models
-            weights = torch.tensor([1.0/0.323, 1.0/0.444, 1.0/0.233], dtype=torch.float32)
+            if class_priors is not None:
+                # Use dynamically computed priors from the training set
+                weights = torch.tensor([1.0/p if p > 0 else 0.0 for p in class_priors], dtype=torch.float32)
+            else:
+                # Fallback to Oracle Dataset Priors for AMI: Hubert: ~32.3%, Whisper: ~44.4%, Wav2Vec2: ~23.3%
+                weights = torch.tensor([1.0/0.323, 1.0/0.444, 1.0/0.233], dtype=torch.float32)
+            
             # Normalize to preserve overall learning rate scale (sum = num_classes)
-            weights = weights / weights.sum() * 3.0
+            weights = weights / weights.sum() * len(MODEL_NAMES)
             self.register_buffer("class_weights", weights)
         else:
             self.class_weights = None
@@ -372,6 +377,15 @@ def train(cfg: DictConfig):
     steps_per_epoch = len(train_loader)
     total_steps = steps_per_epoch * cfg.max_epochs
 
+    class_priors = None
+    if cfg.class_balanced_loss:
+        train_wers = full_dataset.wer_matrix[train_ds.indices]
+        best_model_indices = np.argmin(train_wers, axis=1)
+        counts = np.bincount(best_model_indices, minlength=len(MODEL_NAMES))
+        class_priors = (counts / len(best_model_indices)).tolist()
+        logger.info("Computed train set class priors for balanced loss: %s", 
+                    dict(zip(MODEL_NAMES, class_priors)))
+
     lightning_model = ASRSelectorModule(
         arch=cfg.arch,
         d_model=cfg.d_model,
@@ -395,6 +409,7 @@ def train(cfg: DictConfig):
         soft_ce_temperature=cfg.soft_ce_temperature,
         label_smoothing=cfg.label_smoothing,
         class_balanced_loss=cfg.class_balanced_loss,
+        class_priors=class_priors,
     )
 
     param_counts = lightning_model.model.count_parameters()

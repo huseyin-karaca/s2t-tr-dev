@@ -88,6 +88,11 @@ run_main_results_voxpopuli_v2:
 run_main_results_voxpopuli_v3:
 	uv run python -m src.experiments.main_results experiments=main_results_voxpopuli_v3
 
+## Run the main results pipeline for the VoxPopuli dataset V4 (Dynamic Class Balanced Loss)
+.PHONY: run_main_results_voxpopuli_v4
+run_main_results_voxpopuli_v4:
+	uv run python -m src.experiments.main_results experiments=main_results_voxpopuli_v4
+
 ## Make dataset
 .PHONY: data
 data: requirements

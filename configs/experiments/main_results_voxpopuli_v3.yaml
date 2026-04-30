@@ -12,7 +12,7 @@ shared:
   eager_load: true
   allow_tf32: false
   test_average_epochs: 1
-  early_stopping_patience: 8
+  early_stopping_patience: 15
 
 methods:
   # Proposed Final Model (V3 Extreme Risk-Taking)
