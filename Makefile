@@ -78,6 +78,16 @@ run_main_results_ami:
 run_main_results_voxpopuli:
 	uv run python -m src.experiments.main_results experiments=main_results_voxpopuli
 
+## Run the main results pipeline for the VoxPopuli dataset V2
+.PHONY: run_main_results_voxpopuli_v2
+run_main_results_voxpopuli_v2:
+	uv run python -m src.experiments.main_results experiments=main_results_voxpopuli_v2
+
+## Run the main results pipeline for the VoxPopuli dataset V3
+.PHONY: run_main_results_voxpopuli_v3
+run_main_results_voxpopuli_v3:
+	uv run python -m src.experiments.main_results experiments=main_results_voxpopuli_v3
+
 ## Make dataset
 .PHONY: data
 data: requirements

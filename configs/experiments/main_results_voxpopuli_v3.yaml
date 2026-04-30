@@ -1,0 +1,26 @@
+_comment_: "VoxPopuli v3. Testing the 'Acoustic Predictability' hypothesis. We severely drop primary_weight so outliers don't terrify the model. We sharpen soft_ce_temperature to 0.05 to force it to predict the oracle. If it STILL fails to pick Whisper, it proves Whisper's hallucination errors are purely decoder-driven and cannot be predicted from acoustic features alone."
+parquet_path: "data/processed/facebook_voxpopuli/combined_features_with_transcripts.parquet"
+shared:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  max_seq_len: 2000
+  batch_size: 128
+  num_workers: 4
+  max_epochs: 50
+  learning_rate: 1e-4
+  precision: "bf16-mixed"
+  eager_load: true
+  allow_tf32: false
+  test_average_epochs: 1
+  early_stopping_patience: 8
+
+methods:
+  # Proposed Final Model (V3 Extreme Risk-Taking)
+  - name: "hierarchical_transformer_proposed_voxpopuli_v3"
+    arch: "hierarchical_transformer"
+    primary_weight: 0.1         # DO NOT fear the 5.0 WER outliers!
+    aux_ce_weight: 0.5          # Keep standard classification guidance
+    soft_ce_weight: 1.0         # Heavily penalize missing the Soft-CE distribution
+    soft_ce_temperature: 0.05   # Sharpen the distribution so it aggressively picks the #1 model
+    class_balanced_loss: false  
+    seed: [42, 2, 123]
