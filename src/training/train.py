@@ -345,7 +345,13 @@ def train(cfg: DictConfig):
     n_train = int(n_total * cfg.train_ratio)
     n_val = int(n_total * cfg.val_ratio)
     n_test = n_total - n_train - n_val
+    import duckdb
+    from src.data.analyze_priors import analyze_dataset_priors
+
     logger.info("Dataset splits: train=%d, val=%d, test=%d", n_train, n_val, n_test)
+
+    # Analyze Dataset Priors before training
+    analyze_dataset_priors(cfg.parquet_path, verbose=True)
 
     train_ds, val_ds, test_ds = random_split(
         full_dataset,
