@@ -13,7 +13,6 @@ shared:
   allow_tf32: false
   test_average_epochs: 1
   early_stopping_patience: 8
-  seed: [1618, 86400, 98765]
 
 methods:
   # 1. Standard Baseline (MLP Architecture + Standard Hard CE Loss)
@@ -23,6 +22,7 @@ methods:
     aux_ce_weight: 1.0
     soft_ce_weight: 0.0
     class_balanced_loss: true
+    seed: [42, 2, 123, 1337, 31415, 11235, 12321, 27182, 1618, 10101, 7777, 86400, 98765, 34567, 42069, 2026]
 
   # 2. Proposed Final Model (New Architecture + Proposed Loss)
   # Uses aux_ce_weight=0.3 to allow the soft loss and primary loss to guide the hierarchy optimally.
@@ -33,3 +33,4 @@ methods:
     soft_ce_weight: 0.5
     soft_ce_temperature: 1.5
     class_balanced_loss: true
+    seed: [42, 2, 123, 1337, 31415, 11235, 12321, 27182, 1618, 10101, 7777, 86400, 98765, 34567, 42069, 2026]

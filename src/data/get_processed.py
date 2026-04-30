@@ -10,6 +10,10 @@ DATASETS = {
     "ami": {
         "file_id": "1FgN4FQ422HPDCwG-Wl4jrXQGl0tgX6ZP",
         "output_path": "data/processed/edinburghcstr_ami/combined_features_with_transcripts.parquet"
+    },
+    "voxpopuli": {
+        "file_id": "1yf-G-DWhhZLlqeGXZ77GbuhTBmhqyyXA",
+        "output_path": "data/processed/facebook_voxpopuli/combined_features_with_transcripts.parquet"
     }
     # Future datasets can be added here
     # "libri": { ... }
