@@ -175,21 +175,43 @@ class ASRFeatureDataset(Dataset):
             
             for name in MODEL_NAMES:
                 col_name = FEATURE_COLUMNS[name]
-                chunked_arr = table[col_name].combine_chunks()
                 
-                # Extract PyArrow buffers
-                outer_offsets = chunked_arr.offsets.to_numpy()
-                inner_arr = chunked_arr.values
-                inner_offsets = inner_arr.offsets.to_numpy()
+                # To prevent PyArrow from crashing with "offset overflow" (2.1B limit)
+                # on huge 23GB files, we process the chunks manually instead of
+                # calling .combine_chunks() which tries to build a single giant array.
+                col_data = table[col_name]
                 
-                # Assume all frames have the same D
-                D = inner_offsets[1] - inner_offsets[0]
+                all_floats = []
+                all_offsets = [0]
+                current_offset = 0
+                D = None
                 
-                # Get raw floats and cast to float16 to save memory
-                flat_floats = inner_arr.values.to_numpy(zero_copy_only=False).astype(np.float16)
+                for chunk in col_data.chunks:
+                    outer_offsets = chunk.offsets.to_numpy()
+                    inner_arr = chunk.values
+                    inner_offsets = inner_arr.offsets.to_numpy()
+                    
+                    if D is None:
+                        D = inner_offsets[1] - inner_offsets[0]
+                        
+                    # Extract floats for this chunk and downcast to float16
+                    chunk_floats = inner_arr.values.to_numpy(zero_copy_only=False)
+                    if chunk_floats.dtype != np.float16:
+                        chunk_floats = chunk_floats.astype(np.float16)
+                        
+                    all_floats.append(chunk_floats)
+                    
+                    # Update offsets (skip the first 0 of each chunk, add running offset)
+                    shifted_offsets = outer_offsets[1:] + current_offset
+                    all_offsets.extend(shifted_offsets.tolist())
+                    
+                    current_offset += outer_offsets[-1]
+                    
+                flat_floats = np.concatenate(all_floats)
+                final_offsets = np.array(all_offsets, dtype=np.int64)
                 
                 self._flat_buffers[name] = flat_floats
-                self._frame_offsets[name] = outer_offsets
+                self._frame_offsets[name] = final_offsets
                 self._model_dims[name] = D
                 
             logger.info("Eager load complete. Flat buffer size per model: ~%.1f GB", 
