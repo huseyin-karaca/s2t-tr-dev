@@ -62,12 +62,16 @@ def process_dataset(
         "Interim parquets have mismatched row counts."
     )
 
-    logger.info("Combining %d rows ...", w_table.num_rows)
+    import pyarrow.compute as pc
+
+    logger.info("Combining %d rows and downcasting embeddings to float16 ...", w_table.num_rows)
+    target_type = pa.list_(pa.list_(pa.float16()))
+    
     arrays = [
         w_table["ground_truth"],
-        w_table[f"{WHISPER_MODEL}_embedding"],
-        h_table[f"{HUBERT_MODEL}_embedding"],
-        v_table[f"{W2V2_MODEL}_embedding"],
+        pc.cast(w_table[f"{WHISPER_MODEL}_embedding"], target_type),
+        pc.cast(h_table[f"{HUBERT_MODEL}_embedding"], target_type),
+        pc.cast(v_table[f"{W2V2_MODEL}_embedding"], target_type),
         w_table[f"{WHISPER_MODEL}_transcription"],
         h_table[f"{HUBERT_MODEL}_transcription"],
         v_table[f"{W2V2_MODEL}_transcription"],

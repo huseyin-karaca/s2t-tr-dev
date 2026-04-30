@@ -63,10 +63,20 @@ create_environment:
 download_ami:
 	uv run python -m src.data.get_processed -d ami
 
+## Download processed VoxPopuli dataset from Google Drive
+.PHONY: download_voxpopuli
+download_voxpopuli:
+	uv run python -m src.data.get_processed -d voxpopuli
+
 ## Run the main results pipeline for the AMI dataset
 .PHONY: run_main_results_ami
 run_main_results_ami:
 	uv run python -m src.experiments.main_results experiments=main_results_ami
+
+## Run the main results pipeline for the VoxPopuli dataset
+.PHONY: run_main_results_voxpopuli
+run_main_results_voxpopuli:
+	uv run python -m src.experiments.main_results experiments=main_results_voxpopuli
 
 ## Make dataset
 .PHONY: data
